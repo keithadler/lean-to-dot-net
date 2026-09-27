@@ -12,6 +12,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -20,10 +23,10 @@ jobs:
           global-json-file: global.json
 
       - name: Install elan
-        shell: bash
         run: |
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          # On Windows the runner reads GITHUB_PATH as a Windows path.
+          if command -v cygpath >/dev/null; then cygpath -w "$HOME/.elan/bin" >> "$GITHUB_PATH"; else echo "$HOME/.elan/bin" >> "$GITHUB_PATH"; fi
 
       - name: Lean proofs
         working-directory: lean
@@ -37,7 +40,6 @@ jobs:
 
       - name: Re-check everything with Tenet and emit the assembly
         # On one runner the check covers Lean's own library under the project too; the others check the project.
-        shell: bash
         run: |
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then FLAGS=""; else FLAGS="--trust-imports"; fi
           dotnet src/Lean2Il/bin/Release/net10.0/lean2il.dll lean $FLAGS
