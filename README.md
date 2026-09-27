@@ -12,6 +12,8 @@ documentation too, from the Lean: each method's summary is its docstring, its re
 proved about it, and its examples are proved equations turned into C# calls, every one of them run against
 the IL before it is written down.
 
+It runs wherever .NET 10 and Lean do: **macOS, Linux and Windows**, all three built and tested on every push.
+
 ![A C# call to Proven.Round with its hover: both signatures, the Lean docstring, and proved examples replayed on the IL](docs/images/vscode-csharp-hover.png)
 
 **Start here:** the [tutorial](docs/tutorial.md) takes you from nothing to a proved Lean function called from
