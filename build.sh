@@ -30,7 +30,7 @@ dotnet test tests/LeanToDotNet.Tests -c Release -nologo -v quiet
 step "Sample: samples/Invoice"
 dotnet run --project samples/Invoice -c Release
 
-if command -v npx >/dev/null; then
-  step "VS Code extension: vscode/lean-to-dot-net-*.vsix"
-  (cd vscode && npx --yes @vscode/vsce@3 package --no-dependencies >/dev/null && ls -1 *.vsix)
+if command -v npm >/dev/null; then
+  step "VS Code extension: unit tests, then vscode/lean-to-dot-net-*.vsix with lean2il bundled"
+  (cd vscode && npm ci --no-fund --no-audit >/dev/null && npm test 2>&1 | grep -E '^ℹ (pass|fail)' && npm run package >/dev/null && ls -1 *.vsix)
 fi

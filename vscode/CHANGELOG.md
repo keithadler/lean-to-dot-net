@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+- **Works out of the box.** lean2il, Tenet and the two .NET reference assemblies they need ship inside the
+  extension (1.7 MB), so there is nothing to clone or build, and only the .NET 10 runtime is required, not the SDK.
+- **Checks what is missing.** Before a build, it looks for the .NET 10 runtime and Lean, and for either one offers
+  a terminal with the official installer's command typed in, or the download page.
+- **Says when it is out of date.** After an edit or a failed build, the status bar, the Proofs view, the lenses and
+  the dashboard say they show the last successful build.
+- **Lenses follow the code.** They are placed by finding the declaration in the current text, so they stay on
+  the right line while you edit.
+- Unit tests for the parsing and matching (`npm test`); C# calls in line comments are no longer matched.
+- The view is titled **Proofs**; marked as a preview while the compiler is 0.x.
+
 ## 0.2.0
 
 - The Proofs view in the Activity Bar: assemblies, functions, proved examples and theorems.

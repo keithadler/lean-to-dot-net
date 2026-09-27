@@ -10,14 +10,20 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const cp = require('child_process');
+const lib = require('./lib');
 
 /** @type {Map<string, {root: string, dir: string, proof: any}>} Lake project root -> its last build */
 const builds = new Map();
 const changed = new vscode.EventEmitter();
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-let status, diagnostics, tree, dashboard, building = false;
+const { plural, firstPara, esc, inline } = lib;
+let status, diagnostics, tree, dashboard, extensionPath, output, building = false;
+/** The last build: what ran, how it ended, what it printed. Returned from activate() for tests and other extensions. */
+const api = { lastBuild: undefined };
 
 function activate(context) {
+  extensionPath = context.extensionPath;
+  output = vscode.window.createOutputChannel('Lean to .NET');
+  context.subscriptions.push(output);
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   diagnostics = vscode.languages.createDiagnosticCollection('lean2il');
   tree = new ProofTree();
@@ -38,7 +44,10 @@ function activate(context) {
     vscode.languages.registerHoverProvider({ pattern: '**/*.lean' }, { provideHover: leanHover }),
     vscode.languages.registerCompletionItemProvider({ language: 'csharp' }, { provideCompletionItems: csharpCompletions }, '.'),
     vscode.workspace.onDidSaveTextDocument(doc => {
-      if (doc.fileName.endsWith('.lean') && vscode.workspace.getConfiguration('lean2dotnet').get('buildOnSave') && !building) build();
+      if (!doc.fileName.endsWith('.lean')) return;
+      for (const b of builds.values()) if (doc.fileName.startsWith(b.root + path.sep)) b.stale = true;
+      updateStatus(); tree.refresh(); dashboard?.render(); changed.fire();
+      if (vscode.workspace.getConfiguration('lean2dotnet').get('buildOnSave') && !building) build();
     }),
     vscode.workspace.onDidChangeConfiguration(e => e.affectsConfiguration('lean2dotnet') && changed.fire()),
   );
@@ -47,6 +56,7 @@ function activate(context) {
   watcher.onDidCreate(loadAll); watcher.onDidChange(loadAll); watcher.onDidDelete(loadAll);
   context.subscriptions.push(watcher);
   loadAll();
+  return api;
 }
 
 // ---------------------------------------------------------------- reading builds
@@ -56,6 +66,23 @@ async function lakeRoots() {
   return [...new Set(files.map(f => path.dirname(f.fsPath)))];
 }
 
+/** @type {Set<string>} roots whose last build from this window failed */
+const failed = new Set();
+
+function leanSourceTimes(root) {
+  const times = [];
+  const walk = dir => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.lean')) times.push(fs.statSync(p).mtimeMs);
+    }
+  };
+  try { walk(root); } catch { /* unreadable folders are skipped */ }
+  return times;
+}
+
 async function loadAll() {
   builds.clear();
   for (const root of await lakeRoots()) {
@@ -63,7 +90,10 @@ async function loadAll() {
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.proof.json'))) {
       try {
-        builds.set(root, { root, dir, proof: JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) });
+        const file = path.join(dir, f);
+        const proof = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const stale = lib.isStale(fs.statSync(file).mtimeMs, leanSourceTimes(root));
+        builds.set(root, { root, dir, proof, stale });
       } catch { /* a half-written file; the watcher fires again when it is complete */ }
     }
   }
@@ -83,6 +113,11 @@ function updateStatus() {
   } else if (!b) {
     status.text = '$(package) Lean to .NET';
     status.tooltip = 'No assembly built yet. Click to build.';
+    status.command = 'lean2dotnet.build';
+  } else if (failed.has(b.root) || b.stale) {
+    const why = failed.has(b.root) ? 'the last build failed' : 'the Lean has changed since the last build';
+    status.text = `$(history) ${b.proof.assembly}: out of date`;
+    status.tooltip = new vscode.MarkdownString(`**${b.proof.dll}** is from an earlier build: ${why}. The lenses, hovers and dashboard show that build.\n\nClick to rebuild.`);
     status.command = 'lean2dotnet.build';
   } else {
     const v = b.proof.verdict;
@@ -110,13 +145,11 @@ function theoremOf(b, name) { return b.proof.theorems.find(t => t.name === name)
 function exampleTheorems(f) { return new Set(f.examples.map(e => e.theorem)); }
 
 function leanvizUrl(b, t) {
-  if (t.leanviz) return t.leanviz;
-  const base = vscode.workspace.getConfiguration('lean2dotnet').get('leanvizUrl');
-  if (!base) return undefined;
-  return (base.includes('?') ? base : base.replace(/\/?$/, '/')) + '#/d/' + encodeURIComponent(t.name);
+  return t.leanviz || lib.leanvizLink(vscode.workspace.getConfiguration('lean2dotnet').get('leanvizUrl'), t.name);
 }
 
-const firstPara = s => (s || '').split('\n\n')[0].replace(/\n/g, ' ').trim();
+const outOfDate = b => b.stale || failed.has(b.root);
+
 const lensesOn = () => vscode.workspace.getConfiguration('lean2dotnet').get('codeLens');
 
 // ---------------------------------------------------------------- the Proofs view
@@ -132,7 +165,7 @@ class ProofTree {
       return [...builds.values()].map(b => {
         const v = b.proof.verdict;
         const item = new vscode.TreeItem(b.proof.dll, vscode.TreeItemCollapsibleState.Expanded);
-        item.description = v.Checked ? `Tenet ✓ ${v.Declarations.toLocaleString()} re-checked` : 'not re-checked';
+        item.description = (outOfDate(b) ? 'out of date · ' : '') + (v.Checked ? `Tenet ✓ ${v.Declarations.toLocaleString()} re-checked` : 'not re-checked');
         item.iconPath = v.Checked ? new vscode.ThemeIcon('verified-filled', new vscode.ThemeColor('testing.iconPassed')) : new vscode.ThemeIcon('warning');
         item.tooltip = new vscode.MarkdownString(verdictText(v));
         item.command = { command: 'lean2dotnet.dashboard', title: 'Open Proof Dashboard' };
@@ -220,8 +253,6 @@ function openDashboard(context) {
   dashboard.render();
 }
 
-const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const inline = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
 
 function dashboardHtml(webview) {
   const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
@@ -243,6 +274,7 @@ function dashboardHtml(webview) {
         <div><b>${nEx}</b><span>examples replayed on the IL</span></div>
         <div><b>${esc(v.lean || '')}</b><span>Lean</span></div>
       </div>
+      ${outOfDate(b) ? `<div class="verdict warn">This is the last successful build: ${failed.has(b.root) ? 'the latest build failed (see the Problems panel)' : 'the Lean has changed since'}. Rebuild to bring it up to date.</div>` : ''}
       <div class="actions"><button data-msg="${data({ type: 'build' })}">Rebuild</button><button class="secondary" data-msg="${data({ type: 'docs', root: b.root })}">API docs</button></div>
     </header>`;
     for (const f of p.functions) {
@@ -332,21 +364,31 @@ function dashboardHtml(webview) {
 function leanLenses(doc) {
   if (!lensesOn()) return [];
   const lenses = [];
+  const text = doc.getText();
   for (const b of builds.values()) {
     const rel = path.relative(b.root, doc.uri.fsPath).split(path.sep).join('/');
-    for (const f of b.proof.functions.filter(f => f.file === rel && f.source)) {
-      const range = new vscode.Range(f.source.line - 1, 0, f.source.line - 1, 0);
-      lenses.push(new vscode.CodeLens(range, { title: `$(package) .NET: ${f.signatures[0].replace('public static ', '')}`, command: 'lean2dotnet.dashboard' }));
+    const was = outOfDate(b) ? '$(history) last build: ' : '';
+    const at = (name, kinds, fallback) => {
+      const i = lib.declarationLine(text, name, kinds);
+      const line = i >= 0 ? i : (fallback ? fallback - 1 : -1);
+      return line >= 0 ? new vscode.Range(line, 0, line, 0) : undefined;
+    };
+    for (const f of b.proof.functions.filter(f => f.file === rel)) {
+      const range = at(f.lean, 'def|abbrev', f.source?.line);
+      if (!range) continue;
+      lenses.push(new vscode.CodeLens(range, { title: `${was}$(package) .NET: ${f.signatures[0].replace('public static ', '')}`, command: 'lean2dotnet.dashboard' }));
       const ths = f.theorems.length - f.examples.length;
       lenses.push(new vscode.CodeLens(range, { title: `$(verified) ${plural(ths, 'theorem')} · ${plural(f.examples.length, 'proved example')} replayed on the IL`, command: 'lean2dotnet.dashboard' }));
     }
-    for (const t of b.proof.theorems.filter(t => t.file === rel && t.line && t.about.length)) {
-      const range = new vscode.Range(t.line - 1, 0, t.line - 1, 0);
+    const examples = b.proof.functions.flatMap(f => f.examples);
+    for (const t of b.proof.theorems.filter(t => t.file === rel && t.about.length)) {
+      const range = at(t.name, 'theorem|lemma', t.line);
+      if (!range) continue;
+      const ex = examples.find(e => e.theorem === t.name);
       const calls = b.proof.functions.filter(f => t.about.includes(f.lean)).map(f => f.call).join(', ');
-      const isExample = b.proof.functions.some(f => f.examples.some(e => e.theorem === t.name));
-      const title = isExample
-        ? `$(pass-filled) replayed on the IL: ${b.proof.functions.flatMap(f => f.examples).find(e => e.theorem === t.name).call} returns ${b.proof.functions.flatMap(f => f.examples).find(e => e.theorem === t.name).result}`
-        : `$(verified) in the .NET docs of ${calls}${b.proof.verdict.Checked ? ' · re-checked by Tenet' : ''}`;
+      const title = ex
+        ? `${was}$(pass-filled) replayed on the IL: ${ex.call} returns ${ex.result}`
+        : `${was}$(verified) in the .NET docs of ${calls}${b.proof.verdict.Checked ? ' · re-checked by Tenet' : ''}`;
       lenses.push(new vscode.CodeLens(range, { title, command: 'lean2dotnet.dashboard' }));
     }
   }
@@ -365,14 +407,8 @@ function leanHover(doc, pos) {
 // ---------------------------------------------------------------- C# side
 
 function csharpCalls(doc) {
-  const text = doc.getText();
-  const out = [];
-  for (const f of allFunctions()) {
-    const re = new RegExp(`\\b${f.call.replace('.', '\\.')}\\s*\\(`, 'g');
-    let m;
-    while ((m = re.exec(text))) out.push({ f, offset: m.index, length: f.call.length });
-  }
-  return out;
+  const fns = allFunctions();
+  return lib.csharpCalls(doc.getText(), fns.map(f => f.call)).map(h => ({ ...h, f: fns.find(f => f.call === h.call) }));
 }
 
 function csharpLenses(doc) {
@@ -477,6 +513,8 @@ function toolEnv() {
 function lean2ilCommand(root, env) {
   const configured = vscode.workspace.getConfiguration('lean2dotnet').get('lean2ilCommand');
   if (configured) return configured;
+  const bundled = path.join(extensionPath, 'server', 'lean2il.dll');
+  if (fs.existsSync(bundled)) return `dotnet "${bundled}"`;
   try {
     cp.execSync(process.platform === 'win32' ? 'where lean2il' : 'command -v lean2il', { stdio: 'ignore', env });
     return 'lean2il';
@@ -508,6 +546,7 @@ async function build() {
     return;
   }
   const env = toolEnv();
+  if (!(await prerequisitesMet(env, root))) return;
   const tool = lean2ilCommand(root, env);
   if (!tool) {
     const pick = await vscode.window.showErrorMessage('lean2il was not found. Run ./setup.sh in the lean-to-dot-net repository, or set lean2dotnet.lean2ilCommand.', 'Open Settings', 'Getting Started');
@@ -518,6 +557,7 @@ async function build() {
   const cfg = vscode.workspace.getConfiguration('lean2dotnet');
   const flags = [cfg.get('checkImports') ? '' : '--trust-imports', cfg.get('leanvizUrl') ? `--leanviz "${cfg.get('leanvizUrl')}"` : ''].filter(Boolean).join(' ');
   const command = `lake build && ${tool} . ${flags}`;
+  output.appendLine(`[${new Date().toLocaleTimeString()}] ${root}: ${command}`);
 
   building = true;
   updateStatus();
@@ -526,9 +566,13 @@ async function build() {
   task.presentationOptions = { reveal: vscode.TaskRevealKind.Always, clear: true, panel: vscode.TaskPanelKind.Dedicated, focus: false };
   await vscode.tasks.executeTask(task);
 
-  async function onBuilt(code, output) {
+  async function onBuilt(code, out) {
     building = false;
-    publishDiagnostics(root, output);
+    if (code === 0) failed.delete(root); else failed.add(root);
+    api.lastBuild = { root, command, code, output: out };
+    output.appendLine(`[${new Date().toLocaleTimeString()}] exit ${code}`);
+    if (code !== 0) output.appendLine(out.split(/\r?\n/).slice(-30).join('\n'));
+    publishDiagnostics(root, out);
     await loadAll();
     const b = builds.get(root);
     if (code === 0 && b) {
@@ -543,6 +587,41 @@ async function build() {
       if (pick) vscode.commands.executeCommand('workbench.actions.view.problems');
     }
   }
+}
+
+/**
+ * Lean to .NET needs the .NET 10 runtime and Lean's `lake`. When one is missing, say which, and offer a terminal
+ * with the official installer's command typed in but not run: the person presses Enter, or does not.
+ */
+async function prerequisitesMet(env, root) {
+  // From the project folder: its lean-toolchain picks Lean's version, so lake works there even when elan has no
+  // default toolchain.
+  const run = cmd => { try { return cp.execSync(cmd, { env, cwd: root, stdio: ['ignore', 'pipe', 'ignore'], timeout: 120000 }).toString(); } catch { return undefined; } };
+  const win = process.platform === 'win32';
+  const missing = [];
+  if (!lib.hasRuntime(run('dotnet --list-runtimes'))) {
+    missing.push({ what: 'the .NET 10 runtime', url: 'https://dotnet.microsoft.com/download/dotnet/10.0',
+      command: win ? '& ([scriptblock]::Create((iwr https://dot.net/v1/dotnet-install.ps1))) -Channel 10.0 -Runtime dotnet'
+                   : 'curl -sSfL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --runtime dotnet' });
+  }
+  if (run('lake --version') === undefined) {
+    missing.push({ what: 'Lean (elan and lake)', url: 'https://lean-lang.org/install/',
+      command: win ? 'curl -O --location https://raw.githubusercontent.com/leanprover/elan/master/elan-init.ps1; powershell -ExecutionPolicy Bypass -f elan-init.ps1'
+                   : 'curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh' });
+  }
+  for (const m of missing) {
+    output.appendLine(`missing: ${m.what}`);
+    const pick = await vscode.window.showErrorMessage(`Lean to .NET needs ${m.what}, which was not found.`, 'Install in Terminal', 'Open Download Page');
+    if (pick === 'Install in Terminal') {
+      const t = vscode.window.createTerminal({ name: `Install ${m.what}` });
+      t.show();
+      t.sendText(m.command, false);
+      vscode.window.showInformationMessage(`The installer command is typed in the terminal. Press Enter there to run it, then build again.`);
+    } else if (pick === 'Open Download Page') {
+      vscode.env.openExternal(vscode.Uri.parse(m.url));
+    }
+  }
+  return missing.length === 0;
 }
 
 /** A terminal that runs the build and keeps its output, so failures can become diagnostics. */
@@ -575,41 +654,29 @@ function publishDiagnostics(root, output) {
   const byFile = new Map();
   const add = (file, line, col, message, severity) => {
     const uri = vscode.Uri.file(path.isAbsolute(file) ? file : path.join(root, file));
-    const d = new vscode.Diagnostic(new vscode.Range(Math.max(0, line - 1), Math.max(0, col), Math.max(0, line - 1), 1000), message, severity);
+    const d = new vscode.Diagnostic(new vscode.Range(Math.max(0, line - 1), Math.max(0, col), Math.max(0, line - 1), 1000), message,
+      severity === 'warning' ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error);
     d.source = 'lean2il';
-    (byFile.get(uri.toString()) ?? byFile.set(uri.toString(), { uri, list: [] }).get(uri.toString())).list.push(d);
+    if (!byFile.has(uri.toString())) byFile.set(uri.toString(), { uri, list: [] });
+    byFile.get(uri.toString()).list.push(d);
   };
-  const lines = output.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    const m = /^(error|warning): (.+?\.lean):(\d+):(\d+): (.*)$/.exec(lines[i]);
-    if (m) {
-      const more = [];
-      for (let j = i + 1; j < lines.length && j < i + 12 && !/^(error|warning|info|✖|⚠|✔|trace)/.test(lines[j]); j++) more.push(lines[j]);
-      add(m[2], +m[3], +m[4], [m[5], ...more].join('\n').trim(), m[1] === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning);
-      continue;
-    }
-    const r = /REJECTED \S+: (\S+): (.*)$/.exec(lines[i]) || /^lean2il: ([A-Za-z_][\w.']*): (.*)$/.exec(lines[i]);
-    if (r) {
-      const loc = findDeclaration(root, r[1]);
-      const msg = (lines[i].includes('REJECTED') ? 'Tenet rejected this declaration: ' : 'lean2il cannot compile this: ') + r[2];
-      if (loc) add(loc.file, loc.line, 0, msg, vscode.DiagnosticSeverity.Error);
-      else vscode.window.showErrorMessage(`${r[1]}: ${msg}`);
-    }
+  for (const p of lib.parseBuildOutput(output)) {
+    if (p.kind === 'lean') { add(p.file, p.line, p.column, p.message, p.severity); continue; }
+    const loc = p.name && findDeclaration(root, p.name);
+    if (loc) add(loc.file, loc.line, 0, p.message, p.severity);
+    else vscode.window.showErrorMessage(p.message.replace(/^lean2il cannot compile this: /, 'lean2il: '));
   }
   for (const { uri, list } of byFile.values()) diagnostics.set(uri, list);
 }
 
 function findDeclaration(root, name) {
-  const short = name.split('.').pop();
-  const re = new RegExp(`^\\s*(?:@\\[[^\\]]*\\]\\s*)?(?:private |protected |noncomputable )*(?:def|theorem|lemma|abbrev|structure|inductive|instance)\\s+(?:[\\w.]*\\.)?${short.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
   const walk = dir => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       if (e.name.startsWith('.')) continue;
       const p = path.join(dir, e.name);
       if (e.isDirectory()) { const r = walk(p); if (r) return r; }
       else if (e.name.endsWith('.lean')) {
-        const ls = fs.readFileSync(p, 'utf8').split('\n');
-        const i = ls.findIndex(l => re.test(l));
+        const i = lib.declarationLine(fs.readFileSync(p, 'utf8'), name);
         if (i >= 0) return { file: p, line: i + 1 };
       }
     }

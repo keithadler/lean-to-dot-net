@@ -62,3 +62,47 @@ jobs:
           path: |
             lean/.lake/dotnet/
             vscode/*.vsix
+
+  vscode:
+    # The extension: unit tests, the package (with lean2il bundled), and the integration suite in a real VS Code.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Lean proofs, and a first assembly for the tests to look at
+        run: |
+          (cd lean && lake build)
+          dotnet run --project src/Lean2Il -c Release -- lean --trust-imports
+
+      - name: Unit tests
+        working-directory: vscode
+        run: npm ci && npm test
+
+      - name: Package, with lean2il bundled
+        working-directory: vscode
+        run: npm run package
+
+      - name: Integration tests in VS Code
+        working-directory: vscode
+        run: xvfb-run -a npm run test:integration
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: vscode/*.vsix

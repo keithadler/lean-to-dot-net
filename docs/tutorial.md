@@ -5,6 +5,11 @@ In about fifteen minutes: a Lean function with a docstring, two theorems and a w
 
 ## 0. Install
 
+> **Only want the editor?** Download `lean-to-dot-net-0.3.0.vsix` from the
+> [latest release](https://github.com/keithadler/lean-to-dot-net/releases/latest) and run
+> `code --install-extension lean-to-dot-net-0.3.0.vsix`. It brings lean2il and Tenet with it; where this page
+> says `lean2il .`, run **Lean to .NET: Build .NET Assembly** instead. Everything else is the same.
+
 ```bash
 git clone https://github.com/keithadler/lean-to-dot-net
 cd lean-to-dot-net

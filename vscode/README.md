@@ -37,6 +37,8 @@ Problems panel on the line they are about. Turn on `lean2dotnet.buildOnSave` to 
 
 ![A refusal in the Problems panel, on the line it is about](images/vscode-diagnostics.png)
 
+![The getting-started walkthrough](images/vscode-walkthrough.png)
+
 **Getting started.** A walkthrough on the Welcome page goes from installing Lean to calling a proved function
 from C#. Type `export` in a Lean file for a snippet of an exported definition with its docstring, or
 `proved-example` for an example lean2il will turn into a tested C# call.
@@ -51,21 +53,26 @@ little more.
 
 ## Requirements
 
-- `lean2il`: clone [lean-to-dot-net](https://github.com/keithadler/lean-to-dot-net) and run `./setup.sh`,
-  which installs Lean (through elan) and the .NET 10 SDK if they are missing. Tenet comes from NuGet; there
-  is nothing to install for it. The extension finds `lean2il` on the PATH or built in the workspace.
+The extension brings **lean2il** and **Tenet** with it; there is nothing to clone or build. It needs:
+
+- **The .NET 10 runtime** (or SDK) and **Lean 4** (through [elan](https://github.com/leanprover/elan)). The
+  first time you build, the extension checks for both and, for whichever is missing, offers a terminal with the
+  official installer's command typed in, ready to run.
 - The official [Lean 4 extension](https://marketplace.visualstudio.com/items?itemName=leanprover.lean4) for
-  Lean syntax and the infoview.
+  Lean syntax and the infoview (recommended, not required).
+
+macOS, Linux and Windows. The compiled assembly works from C#, F# and VB.NET.
 
 ## Settings
 
 | Setting | Default | |
 |---|---|---|
-| `lean2dotnet.lean2ilCommand` | empty | How to run lean2il, when it is not on the PATH or in the workspace. |
+| `lean2dotnet.lean2ilCommand` | empty | Use a different lean2il than the bundled one, such as a development build. |
 | `lean2dotnet.checkImports` | `false` | Have Tenet re-check Lean's own library under the project too. Slower, strongest. |
 | `lean2dotnet.buildOnSave` | `false` | Rebuild when a `.lean` file is saved. |
 | `lean2dotnet.leanvizUrl` | empty | A LeanViz site for the project, for theorem links. |
 | `lean2dotnet.codeLens` | `true` | Proof lenses in Lean and C#. |
 
 Everything the extension shows comes from the `.proof.json` lean2il writes beside the assembly, so it is
-exactly what the last build proved.
+exactly what the last build proved. When the Lean has changed since, or the last build failed, the status bar,
+the lenses and the dashboard say the information is from the last successful build.

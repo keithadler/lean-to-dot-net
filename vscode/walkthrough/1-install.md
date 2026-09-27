@@ -1,15 +1,13 @@
-## Install the toolchain
+## Install Lean and .NET
 
-lean-to-dot-net needs two things, and `./setup.sh` in the repository installs whichever is missing:
+The extension brings its own compiler, **lean2il**, and **Tenet**, the independent Lean kernel it uses. Two
+things have to be on the machine:
 
+- **The .NET 10 runtime** (the SDK includes it). To call the result from C#, F# or VB.NET you want the SDK anyway.
 - **Lean 4**, through [elan](https://github.com/leanprover/elan), Lean's version manager. Each project's
   `lean-toolchain` file picks the exact Lean version.
-- **The .NET 10 SDK**.
 
-**Tenet** needs no installing. It comes from nuget.org the first time `dotnet` builds the compiler, and its
-command-line checker is pinned in `dotnet-tools.json`, so `dotnet tool restore` fetches it.
+The first time you build, the extension checks for both. If one is missing it says which, and offers a
+terminal with the official installer's command typed in: press Enter to run it.
 
-```bash
-git clone https://github.com/keithadler/lean-to-dot-net
-cd lean-to-dot-net && ./setup.sh
-```
+It runs on macOS, Linux and Windows.

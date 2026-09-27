@@ -85,10 +85,17 @@ internal static class Program
                 }
             }
         }
-        var own = Directory.GetFiles(lib, "*.olean", SearchOption.AllDirectories)
+        var built = Directory.GetFiles(lib, "*.olean", SearchOption.AllDirectories)
             .Select(p => (Module: search.ModuleNameOf(p), Path: p))
             .OrderBy(m => m.Module.ToString(), StringComparer.Ordinal)
             .ToList();
+        // Lake leaves the .olean of a deleted source file behind. Compiling it would resurrect code that no longer
+        // exists, so only modules with a source file in the project count.
+        var own = built.Where(m => File.Exists(Path.Combine(project, Path.Combine(m.Module.ToString().Split('.')) + ".lean"))).ToList();
+        foreach (var orphan in built.Except(own))
+        {
+            Console.WriteLine($"lean2il: skipping {orphan.Module}: its .olean has no source file (left over from a deleted module)");
+        }
         if (own.Count == 0)
         {
             throw new FileNotFoundException($"no .olean files under {lib}; run `lake build` first");

@@ -21,6 +21,22 @@
     <PackageReference Include="System.Reflection.MetadataLoadContext" Version="10.0.0" />
   </ItemGroup>
 
+  <!-- Ship the two reference assemblies an emitted assembly refers to, System.Runtime and System.Runtime.Numerics,
+       beside lean2il, so emitting needs only the .NET runtime, not the SDK. They come from the targeting pack this
+       project is compiled against, and are MIT-licensed like the rest of .NET. -->
+  <Target Name="CopyReferenceAssemblies" AfterTargets="Build">
+    <ItemGroup>
+      <_Lean2IlRef Include="@(ReferencePath)" Condition="'%(Filename)' == 'System.Runtime' Or '%(Filename)' == 'System.Runtime.Numerics'" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_Lean2IlRef)" DestinationFolder="$(OutDir)ref" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PublishReferenceAssemblies" AfterTargets="Publish">
+    <ItemGroup>
+      <_Lean2IlRefPub Include="$(OutDir)ref/*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_Lean2IlRefPub)" DestinationFolder="$(PublishDir)ref" SkipUnchangedFiles="true" />
+  </Target>
+
   <ItemGroup>
     <ProjectReference Include="../LeanToDotNet.Runtime/LeanToDotNet.Runtime.csproj" />
     <None Include="../../README.md" Pack="true" PackagePath="/" />

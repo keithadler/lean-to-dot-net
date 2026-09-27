@@ -83,6 +83,13 @@ internal sealed class Clr : IDisposable
     {
         int major = System.Environment.Version.Major;
         string tfm = $"net{major}.0";
+        // The two reference assemblies an emitted assembly refers to ship beside lean2il (see Lean2Il.csproj), so it
+        // runs with the .NET runtime alone; the SDK's packs are only a fallback for a build that lacks them.
+        string bundled = Path.Combine(AppContext.BaseDirectory, "ref");
+        if (File.Exists(Path.Combine(bundled, "System.Runtime.dll")) && File.Exists(Path.Combine(bundled, "System.Runtime.Numerics.dll")))
+        {
+            return (bundled, tfm);
+        }
         var candidates = new List<string>();
         string shared = Path.GetDirectoryName(typeof(object).Assembly.Location)!; // <root>/shared/Microsoft.NETCore.App/<ver>
         string root = Path.GetFullPath(Path.Combine(shared, "..", "..", ".."));

@@ -138,7 +138,9 @@ page. Lean's other documentation tools fit around this rather than inside it:
 
 ## The VS Code extension
 
-`vscode/` builds `lean-to-dot-net-0.2.0.vsix` (`./setup.sh` installs it):
+`vscode/` builds `lean-to-dot-net-0.3.0.vsix`. **It brings lean2il and Tenet with it**, so the VSIX alone is
+enough: install it, open a Lean project, and build. It needs the .NET 10 runtime and Lean, and offers to install
+either if it is missing.
 
 - **In C#**, every call to a compiled function carries a lens, *proved in Lean, re-checked by Tenet*, that opens
   the Lean definition, and a hover with the signatures, the docstring, the proved examples and the theorems.
@@ -150,6 +152,9 @@ page. Lean's other documentation tools fit around this rather than inside it:
 - **Build .NET Assembly** runs `lake build` and `lean2il` in a terminal; Lean errors, lean2il's refusals and
   Tenet rejections go to the Problems panel on the right line. Optionally on every save.
 - A **walkthrough** on the Welcome page, and Lean **snippets** for an exported definition and a proved example.
+- It says when what it shows is **out of date**: after an edit, or when the last build failed.
+- Tested: unit tests for its parsing, and an integration suite that runs it in a real VS Code, builds, and checks
+  every lens, hover and completion (`npm test`, `npm run test:integration`).
 
 ![The Proofs view and the Proof Dashboard](docs/images/vscode-dashboard.png)
 
@@ -158,6 +163,17 @@ page. Lean's other documentation tools fit around this rather than inside it:
 ![A refusal in the Problems panel, on the line it is about](docs/images/vscode-diagnostics.png)
 
 ## Getting started
+
+**The quickest way:** download `lean-to-dot-net-0.3.0.vsix` from the
+[latest release](https://github.com/keithadler/lean-to-dot-net/releases/latest), then
+
+```bash
+code --install-extension lean-to-dot-net-0.3.0.vsix
+```
+
+open a Lean project in VS Code, mark a definition `@[export]`, and run **Lean to .NET: Build .NET Assembly**.
+
+**From source**, for the command line, the tests and the demo:
 
 ```bash
 git clone https://github.com/keithadler/lean-to-dot-net

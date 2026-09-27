@@ -1,18 +1,45 @@
 {
   "name": "lean-to-dot-net",
   "displayName": "Lean to .NET",
-  "description": "Prove a function in Lean 4, call it from C#. Build the assembly with lean2il, and see the proofs behind every call: a Proofs view, a Proof Dashboard, CodeLens, hovers and completion in Lean and C#, and Tenet's verdict in the status bar.",
-  "version": "0.2.0",
+  "description": "Prove a function in Lean 4, call it from C#, F# or VB.NET. Builds the assembly with lean2il (bundled) and shows the proofs behind every call: a Proofs view, a Proof Dashboard, lenses, hovers and completion, and Tenet's verdict in the status bar.",
+  "version": "0.3.0",
   "publisher": "keithadler",
   "license": "MIT",
   "icon": "images/icon.png",
-  "galleryBanner": { "color": "#1e2a4a", "theme": "dark" },
-  "repository": { "type": "git", "url": "https://github.com/keithadler/lean-to-dot-net" },
+  "galleryBanner": {
+    "color": "#1e2a4a",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/keithadler/lean-to-dot-net"
+  },
   "homepage": "https://github.com/keithadler/lean-to-dot-net#readme",
-  "bugs": { "url": "https://github.com/keithadler/lean-to-dot-net/issues" },
-  "engines": { "vscode": "^1.90.0" },
-  "categories": ["Programming Languages", "Snippets", "Visualization", "Other"],
-  "keywords": ["lean", "lean4", "dotnet", "csharp", "formal verification", "theorem prover", "proof", "tenet", "il", "decimal", "rounding"],
+  "bugs": {
+    "url": "https://github.com/keithadler/lean-to-dot-net/issues"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets",
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "lean",
+    "lean4",
+    "dotnet",
+    "csharp",
+    "formal verification",
+    "theorem prover",
+    "proof",
+    "tenet",
+    "il",
+    "decimal",
+    "rounding"
+  ],
   "main": "./extension.js",
   "activationEvents": [
     "workspaceContains:**/lakefile.toml",
@@ -23,19 +50,66 @@
   ],
   "contributes": {
     "commands": [
-      { "command": "lean2dotnet.build", "title": "Build .NET Assembly", "category": "Lean to .NET", "icon": "$(package)" },
-      { "command": "lean2dotnet.dashboard", "title": "Open Proof Dashboard", "category": "Lean to .NET", "icon": "$(dashboard)" },
-      { "command": "lean2dotnet.openDocs", "title": "Open API Docs", "category": "Lean to .NET", "icon": "$(book)" },
-      { "command": "lean2dotnet.refresh", "title": "Refresh", "category": "Lean to .NET", "icon": "$(refresh)" },
-      { "command": "lean2dotnet.copyCall", "title": "Copy C# Call", "category": "Lean to .NET", "icon": "$(copy)" },
-      { "command": "lean2dotnet.openLeanViz", "title": "Open in LeanViz", "category": "Lean to .NET", "icon": "$(link-external)" },
-      { "command": "lean2dotnet.reveal", "title": "Show in Lean", "category": "Lean to .NET" }
+      {
+        "command": "lean2dotnet.build",
+        "title": "Build .NET Assembly",
+        "category": "Lean to .NET",
+        "icon": "$(package)"
+      },
+      {
+        "command": "lean2dotnet.dashboard",
+        "title": "Open Proof Dashboard",
+        "category": "Lean to .NET",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "lean2dotnet.openDocs",
+        "title": "Open API Docs",
+        "category": "Lean to .NET",
+        "icon": "$(book)"
+      },
+      {
+        "command": "lean2dotnet.refresh",
+        "title": "Refresh",
+        "category": "Lean to .NET",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "lean2dotnet.copyCall",
+        "title": "Copy C# Call",
+        "category": "Lean to .NET",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "lean2dotnet.openLeanViz",
+        "title": "Open in LeanViz",
+        "category": "Lean to .NET",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "lean2dotnet.reveal",
+        "title": "Show in Lean",
+        "category": "Lean to .NET"
+      }
     ],
     "viewsContainers": {
-      "activitybar": [ { "id": "lean2dotnet", "title": "Lean to .NET", "icon": "images/activity.svg" } ]
+      "activitybar": [
+        {
+          "id": "lean2dotnet",
+          "title": "Proofs",
+          "icon": "images/activity.svg"
+        }
+      ]
     },
     "views": {
-      "lean2dotnet": [ { "id": "lean2dotnet.proofs", "name": "Proofs", "icon": "images/activity.svg", "contextualTitle": "Lean to .NET" } ]
+      "lean2dotnet": [
+        {
+          "id": "lean2dotnet.proofs",
+          "name": "Proofs",
+          "icon": "images/activity.svg",
+          "contextualTitle": "Lean to .NET"
+        }
+      ]
     },
     "viewsWelcome": [
       {
@@ -45,52 +119,166 @@
     ],
     "menus": {
       "view/title": [
-        { "command": "lean2dotnet.build", "when": "view == lean2dotnet.proofs", "group": "navigation@1" },
-        { "command": "lean2dotnet.dashboard", "when": "view == lean2dotnet.proofs && lean2dotnet.built", "group": "navigation@2" },
-        { "command": "lean2dotnet.openDocs", "when": "view == lean2dotnet.proofs && lean2dotnet.built", "group": "navigation@3" },
-        { "command": "lean2dotnet.refresh", "when": "view == lean2dotnet.proofs", "group": "navigation@4" }
+        {
+          "command": "lean2dotnet.build",
+          "when": "view == lean2dotnet.proofs",
+          "group": "navigation@1"
+        },
+        {
+          "command": "lean2dotnet.dashboard",
+          "when": "view == lean2dotnet.proofs && lean2dotnet.built",
+          "group": "navigation@2"
+        },
+        {
+          "command": "lean2dotnet.openDocs",
+          "when": "view == lean2dotnet.proofs && lean2dotnet.built",
+          "group": "navigation@3"
+        },
+        {
+          "command": "lean2dotnet.refresh",
+          "when": "view == lean2dotnet.proofs",
+          "group": "navigation@4"
+        }
       ],
       "view/item/context": [
-        { "command": "lean2dotnet.copyCall", "when": "view == lean2dotnet.proofs && viewItem == example", "group": "inline" },
-        { "command": "lean2dotnet.openLeanViz", "when": "view == lean2dotnet.proofs && viewItem == theorem-viz", "group": "inline" }
+        {
+          "command": "lean2dotnet.copyCall",
+          "when": "view == lean2dotnet.proofs && viewItem == example",
+          "group": "inline"
+        },
+        {
+          "command": "lean2dotnet.openLeanViz",
+          "when": "view == lean2dotnet.proofs && viewItem == theorem-viz",
+          "group": "inline"
+        }
       ],
       "editor/title": [
-        { "command": "lean2dotnet.build", "when": "resourceExtname == .lean", "group": "navigation@1" },
-        { "command": "lean2dotnet.dashboard", "when": "resourceExtname == .lean && lean2dotnet.built", "group": "navigation@2" }
+        {
+          "command": "lean2dotnet.build",
+          "when": "resourceExtname == .lean",
+          "group": "navigation@1"
+        },
+        {
+          "command": "lean2dotnet.dashboard",
+          "when": "resourceExtname == .lean && lean2dotnet.built",
+          "group": "navigation@2"
+        }
       ],
       "commandPalette": [
-        { "command": "lean2dotnet.reveal", "when": "false" },
-        { "command": "lean2dotnet.copyCall", "when": "false" },
-        { "command": "lean2dotnet.openLeanViz", "when": "false" }
+        {
+          "command": "lean2dotnet.reveal",
+          "when": "false"
+        },
+        {
+          "command": "lean2dotnet.copyCall",
+          "when": "false"
+        },
+        {
+          "command": "lean2dotnet.openLeanViz",
+          "when": "false"
+        }
       ]
     },
-    "snippets": [ { "language": "lean4", "path": "./snippets/lean.json" } ],
+    "snippets": [
+      {
+        "language": "lean4",
+        "path": "./snippets/lean.json"
+      }
+    ],
     "walkthroughs": [
       {
         "id": "lean2dotnet.start",
         "title": "Prove it in Lean, call it from C#",
         "description": "From a Lean definition to a .NET method whose every proof has been re-checked by an independent kernel.",
         "steps": [
-          { "id": "install", "title": "Install Lean and .NET", "description": "One script installs what is missing. Tenet comes from NuGet.", "media": { "markdown": "walkthrough/1-install.md" } },
-          { "id": "mark", "title": "Mark what to compile", "description": "Put @[export] on a Lean definition. Its docstring becomes the .NET docs.", "media": { "markdown": "walkthrough/2-mark.md" } },
-          { "id": "build", "title": "Build the assembly", "description": "Tenet re-checks, lean2il compiles and documents.\n[Build .NET Assembly](command:lean2dotnet.build)", "media": { "markdown": "walkthrough/3-build.md" }, "completionEvents": ["onContext:lean2dotnet.built"] },
-          { "id": "call", "title": "Call it from C#", "description": "Two references, then IntelliSense, lenses and hovers show the proofs.", "media": { "markdown": "walkthrough/4-call.md" } },
-          { "id": "explore", "title": "Explore the proofs", "description": "The Proofs view and the Proof Dashboard.\n[Open Proof Dashboard](command:lean2dotnet.dashboard)", "media": { "markdown": "walkthrough/5-explore.md" }, "completionEvents": ["onCommand:lean2dotnet.dashboard"] }
+          {
+            "id": "install",
+            "title": "Install Lean and .NET",
+            "description": "The extension brings lean2il and Tenet with it. It needs the .NET 10 runtime and Lean, and offers to install either one the first time you build.",
+            "media": {
+              "markdown": "walkthrough/1-install.md"
+            }
+          },
+          {
+            "id": "mark",
+            "title": "Mark what to compile",
+            "description": "Put @[export] on a Lean definition. Its docstring becomes the .NET docs.",
+            "media": {
+              "markdown": "walkthrough/2-mark.md"
+            }
+          },
+          {
+            "id": "build",
+            "title": "Build the assembly",
+            "description": "Tenet re-checks, lean2il compiles and documents.\n[Build .NET Assembly](command:lean2dotnet.build)",
+            "media": {
+              "markdown": "walkthrough/3-build.md"
+            },
+            "completionEvents": [
+              "onContext:lean2dotnet.built"
+            ]
+          },
+          {
+            "id": "call",
+            "title": "Call it from C#",
+            "description": "Two references, then IntelliSense, lenses and hovers show the proofs.",
+            "media": {
+              "markdown": "walkthrough/4-call.md"
+            }
+          },
+          {
+            "id": "explore",
+            "title": "Explore the proofs",
+            "description": "The Proofs view and the Proof Dashboard.\n[Open Proof Dashboard](command:lean2dotnet.dashboard)",
+            "media": {
+              "markdown": "walkthrough/5-explore.md"
+            },
+            "completionEvents": [
+              "onCommand:lean2dotnet.dashboard"
+            ]
+          }
         ]
       }
     ],
     "configuration": {
       "title": "Lean to .NET",
       "properties": {
-        "lean2dotnet.lean2ilCommand": { "type": "string", "default": "", "markdownDescription": "How to run lean2il. Empty: `lean2il` on the PATH, else a `lean2il.dll` built in this workspace, run with `dotnet`." },
-        "lean2dotnet.checkImports": { "type": "boolean", "default": false, "markdownDescription": "Have Tenet re-check Lean's own library under the project too, not just the project. Slower (a minute or two for Lean's core), and the strongest statement." },
-        "lean2dotnet.buildOnSave": { "type": "boolean", "default": false, "markdownDescription": "Rebuild the assembly whenever a `.lean` file in a Lake project is saved." },
-        "lean2dotnet.leanvizUrl": { "type": "string", "default": "", "markdownDescription": "A LeanViz site for the project, such as `https://keithadler.github.io/lean-to-dot-net/leanviz/?p=finance`. Theorems link there from the docs, the Proofs view and the dashboard." },
-        "lean2dotnet.codeLens": { "type": "boolean", "default": true, "markdownDescription": "Show proof lenses over exported Lean definitions and over C# calls to them." }
+        "lean2dotnet.lean2ilCommand": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "How to run lean2il. Empty: `lean2il` on the PATH, else a `lean2il.dll` built in this workspace, run with `dotnet`."
+        },
+        "lean2dotnet.checkImports": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Have Tenet re-check Lean's own library under the project too, not just the project. Slower (a minute or two for Lean's core), and the strongest statement."
+        },
+        "lean2dotnet.buildOnSave": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Rebuild the assembly whenever a `.lean` file in a Lake project is saved."
+        },
+        "lean2dotnet.leanvizUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "A LeanViz site for the project, such as `https://keithadler.github.io/lean-to-dot-net/leanviz/?p=finance`. Theorems link there from the docs, the Proofs view and the dashboard."
+        },
+        "lean2dotnet.codeLens": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show proof lenses over exported Lean definitions and over C# calls to them."
+        }
       }
     }
   },
   "scripts": {
-    "package": "npx --yes @vscode/vsce@3 package --no-dependencies"
+    "test": "node --test test/*.test.js",
+    "prepackage": "dotnet publish ../src/Lean2Il -c Release -o server -p:UseAppHost=false -p:DebugType=none -nologo -v q",
+    "package": "npm run prepackage && npx --yes @vscode/vsce@3 package --no-dependencies",
+    "test:integration": "node test/integration/run.js"
+  },
+  "preview": true,
+  "devDependencies": {
+    "@vscode/test-electron": "^2.5.2"
   }
 }

@@ -1,9 +1,11 @@
-bin/
-obj/
-.lake/
+*.swp
 *.vsix
-node_modules/
+.DS_Store
+.lake/
+.vscode-test/
 TestResults/
 artifacts/
-.DS_Store
-*.swp
+bin/
+node_modules/
+obj/
+server/
