@@ -9,7 +9,7 @@ What the review of 0.1 asked for: a bigger fragment and a stronger check on the 
   rerun on a 1 GB stack instead of crashing the process.
 - **Lists, options and strings**: `List α` as `LeanList<T>`, `Option α` as `LeanOption<T>`, `String` as
   `string` with Lean's character counts. Library functions like `List.map`, `foldr`, `sum`, `reverse` and `++`
-  compile, specialized to closed function arguments.
+  compile, specialized to the functions passed to them.
 - **Differential testing on every build**: each export runs on random inputs through Lean's own compiler and
   through the IL, and the build fails on the first disagreement, naming the input (`--fuzz`, default 100).
 - **Lambdas that use local variables**: `xs.map (fun x => x + k)` compiles to a copy of `List.map` taking `k`.
