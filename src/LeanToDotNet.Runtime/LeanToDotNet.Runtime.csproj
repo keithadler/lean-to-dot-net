@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>The small runtime a lean2il assembly calls into: Lean's Nat and Int arithmetic on BigInteger, and System.Decimal marshaling.</Description>
+    <PackageTags>lean;lean4;formal-verification;biginteger;decimal</PackageTags>
+  </PropertyGroup>
+</Project>

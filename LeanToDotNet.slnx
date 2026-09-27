@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Lean2Il/Lean2Il.csproj" />
+    <Project Path="src/LeanToDotNet.Runtime/LeanToDotNet.Runtime.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/Invoice/Invoice.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LeanToDotNet.Tests/LeanToDotNet.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <ProvenDir>$(MSBuildThisFileDirectory)../../lean/.lake/dotnet/</ProvenDir>
+  </PropertyGroup>
+
+  <!-- The whole integration: two references. Finance.Proven.dll is what lean2il emitted from ../../lean;
+       Finance.Proven.xml beside it gives IntelliSense the Lean docstrings and the proved examples. -->
+  <ItemGroup>
+    <Reference Include="Finance.Proven" HintPath="$(ProvenDir)Finance.Proven.dll" />
+    <Reference Include="LeanToDotNet.Runtime" HintPath="$(ProvenDir)LeanToDotNet.Runtime.dll" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,59 @@
+{
+  "name": "lean-to-dot-net",
+  "displayName": "Lean to .NET",
+  "description": "Compile Lean 4 definitions to a .NET assembly with lean2il, and see the proofs behind every call: CodeLens and hovers in Lean and C#, the Tenet verdict in the status bar.",
+  "version": "0.1.0",
+  "publisher": "keithadler",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "repository": { "type": "git", "url": "https://github.com/keithadler/lean-to-dot-net" },
+  "homepage": "https://github.com/keithadler/lean-to-dot-net#readme",
+  "bugs": { "url": "https://github.com/keithadler/lean-to-dot-net/issues" },
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Programming Languages", "Other"],
+  "keywords": ["lean", "lean4", "dotnet", "csharp", "formal verification", "theorem prover", "tenet", "il"],
+  "main": "./extension.js",
+  "activationEvents": [
+    "workspaceContains:**/lakefile.toml",
+    "workspaceContains:**/lakefile.lean",
+    "workspaceContains:**/*.proof.json",
+    "onLanguage:csharp"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "lean2dotnet.build", "title": "Build .NET Assembly", "category": "Lean to .NET", "icon": "$(package)" },
+      { "command": "lean2dotnet.openDocs", "title": "Open API Docs", "category": "Lean to .NET", "icon": "$(book)" },
+      { "command": "lean2dotnet.reveal", "title": "Show in Lean", "category": "Lean to .NET" }
+    ],
+    "menus": {
+      "editor/title": [
+        { "command": "lean2dotnet.build", "when": "resourceExtname == .lean", "group": "navigation" },
+        { "command": "lean2dotnet.openDocs", "when": "resourceExtname == .lean && lean2dotnet.built", "group": "navigation" }
+      ],
+      "commandPalette": [ { "command": "lean2dotnet.reveal", "when": "false" } ]
+    },
+    "configuration": {
+      "title": "Lean to .NET",
+      "properties": {
+        "lean2dotnet.lean2ilCommand": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "How to run lean2il. Empty: `lean2il` on the PATH, else a `lean2il.dll` built in this workspace, run with `dotnet`."
+        },
+        "lean2dotnet.checkImports": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Have Tenet re-check Lean's own library under the project too, not just the project. Slower (a minute or two for Lean's core), and the strongest statement."
+        },
+        "lean2dotnet.leanvizUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "A LeanViz site for the project. Theorem names in the generated docs link there."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "npx --yes @vscode/vsce@3 package --no-dependencies"
+  }
+}

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LeanViz</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="bar">
+    <a class="brand" href="#/">LeanViz</a>
+    <div class="search">
+      <input id="q" type="search" placeholder="Search a name, k:theorem m:Mathlib.Order to filter, or +Finset.sum +Nat.Prime for statements" autocomplete="off" spellcheck="false">
+      <div id="results" class="results" hidden></div>
+    </div>
+    <!-- The map was reachable only from the home page, so nobody found it. The icon is the thing itself: a
+         treemap, in the colors the real one uses. -->
+    <a class="maplink" id="maplink" href="#/map" title="Map: the whole library as a treemap, sized by declaration count">
+      <svg class="mapicon" viewBox="0 0 22 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect x="0.5" y="0.5" width="12" height="15" rx="1"></rect>
+        <rect x="13.5" y="0.5" width="8" height="6" rx="1"></rect>
+        <rect x="13.5" y="7.5" width="8" height="4" rx="1"></rect>
+        <rect x="13.5" y="12.5" width="4.5" height="3" rx="1"></rect>
+        <rect x="19" y="12.5" width="2.5" height="3" rx="1"></rect>
+      </svg><span>Map</span>
+    </a>
+    <span id="status" class="status"></span>
+  </div>
+  <div class="bar sub">
+    <nav id="projects" class="projects" hidden></nav>
+    <label class="switch" id="scopewrap" hidden title="search only the declarations this project defines, not the libraries underneath it"><input type="checkbox" id="scope"> only <span id="scopename"></span></label>
+    <label class="switch" title="proofs split out of definitions, equation lemmas, matchers, compiler stages"><input type="checkbox" id="gen"> hide generated helpers</label>
+  </div>
+</header>
+<main id="main"><p class="dim">Loading…</p></main>
+<footer>Read straight from the compiled <code>.olean</code> files with <a href="https://github.com/keithadler/tenet">Tenet</a>, without Lean installed. <span id="foot"></span></footer>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+name = "finance"
+defaultTargets = ["Finance"]
+
+[[lean_lib]]
+name = "Finance"

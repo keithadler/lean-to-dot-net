@@ -1,0 +1,9 @@
+bin/
+obj/
+.lake/
+*.vsix
+node_modules/
+TestResults/
+artifacts/
+.DS_Store
+*.swp

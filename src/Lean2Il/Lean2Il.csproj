@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>lean2il</AssemblyName>
+    <RootNamespace>LeanToDotNet</RootNamespace>
+    <Description>Compile Lean 4 definitions to a .NET assembly, after re-checking every proof about them with Tenet.</Description>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>lean2il</ToolCommandName>
+    <PackageId>lean2il</PackageId>
+    <PackageTags>lean;lean4;theorem-prover;formal-verification;il;reflection-emit;tenet;dotnet</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Tenet, the independent Lean 4 kernel on .NET, reads the .olean files and re-checks them. It comes
+         from nuget.org on restore; nothing to install by hand. -->
+    <PackageReference Include="Tenet.Olean" Version="0.11.1" />
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../LeanToDotNet.Runtime/LeanToDotNet.Runtime.csproj" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+</Project>

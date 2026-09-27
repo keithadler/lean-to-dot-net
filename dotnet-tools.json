@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "isRoot": true,
+  "tools": {
+    "tenet": {
+      "version": "0.11.1",
+      "commands": [
+        "tenet"
+      ],
+      "rollForward": false
+    }
+  }
+}
