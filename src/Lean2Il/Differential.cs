@@ -81,7 +81,7 @@ internal sealed class Differential
             if (lean[i] != il[i])
             {
                 Case c = cases[i];
-                throw new CompileError($"the IL disagrees with Lean's own compiler on {c.Export.Name} {string.Join(" ", c.Args.Select(LeanLiteral))}: Lean gives {lean[i]}, the IL gives {il[i]}");
+                throw new CompileError($"the IL disagrees with Lean's own compiler on {c.Export.Name} {string.Join(" ", c.Args.Select(LeanLiteral))}: Lean gives {lean[i]}, the IL gives {il[i]}", c.Export.Name);
             }
         }
         return new Outcome(cases.Count, functions, skipped.Count, skipped);

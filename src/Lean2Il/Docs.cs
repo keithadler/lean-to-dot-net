@@ -611,11 +611,34 @@ internal sealed partial class Docs
             {
                 sb.AppendLine($"    <member name=\"F:{l.ClrName}.{f.ClrName}\"><summary>{XmlText(DocOf(f.Name) ?? f.Name.ToString())}</summary></member>");
             }
+            if (l.Kind == Kind.Struct)
+            {
+                sb.AppendLine($"    <member name=\"M:{l.ClrName}.#ctor{CtorIds(l.RuntimeFields)}\"><summary>{XmlText($"A {l.LeanType?.ToString() ?? l.Name.ToString()}, from its fields.")}</summary></member>");
+            }
+            if (l.Kind == Kind.Union)
+            {
+                string cases = string.Join(", ", l.Variants.Select((v, i) => $"{i} for {v.ClrName}"));
+                sb.AppendLine($"    <member name=\"F:{l.ClrName}.Tag\"><summary>{XmlText($"Which case this is: {cases}. Or test the type: value is {Short(l.ClrName)}.{l.Variants[0].ClrName}.")}</summary></member>");
+                foreach (Variant v in l.Variants)
+                {
+                    string vt = l.ClrName + "." + v.ClrName;
+                    string doc = DocOf(v.Ctor) ?? $"The case {v.Ctor.LastString} of {l.Name}.";
+                    sb.AppendLine($"    <member name=\"T:{vt}\"><summary>{XmlText(doc)}</summary></member>");
+                    sb.AppendLine($"    <member name=\"M:{vt}.#ctor{CtorIds(v.RuntimeFields)}\"><summary>{XmlText(doc)}</summary></member>");
+                    foreach (FieldSlot f in v.RuntimeFields)
+                    {
+                        sb.AppendLine($"    <member name=\"F:{vt}.{f.ClrName}\"><summary>{XmlText(DocOf(f.Name) ?? $"The {f.Name.LastString ?? f.ClrName} of a {v.Ctor.LastString}.")}</summary></member>");
+                    }
+                }
+            }
         }
         sb.AppendLine("  </members>");
         sb.AppendLine("</doc>");
         return sb.ToString();
     }
+
+    private static string CtorIds(FieldSlot[] fields) =>
+        fields.Length == 0 ? "" : "(" + string.Join(",", fields.Select(f => DocId(f.Repr, false))) + ")";
 
     private static string DocId(Repr r, bool dec) =>
         dec && r.Layout?.DecimalShaped == true ? "System.Decimal"

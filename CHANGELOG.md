@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1 (2026-09-27)
+
+For whoever calls the compiled code, and whoever breaks a proof.
+
+- **C# that reads like C#.** A parameter Lean left unnamed (the argument of a definition by pattern matching) is
+  named from its type, `Contains(BigInteger k, Tree tree)` rather than `Tree arg`, so named arguments work.
+- **Generated types print and compare like records.** `Node { Left = Leaf, Key = 5, Right = Leaf }`, and two values
+  are `Equals` (with equal hash codes) when their fields are, as two Lean values are.
+- **IntelliSense for every case** of an inductive type: `Tree.Node`, its constructor, its fields, and `Tag`.
+- **Clickable errors.** `lean2il --msbuild` reports in MSBuild's form, `Split.lean(78,70): error LEAN: ...`, with
+  the place of the declaration for its own refusals, Tenet's rejections and differential failures; `--lake-build`
+  runs `lake build` first and places Lean's own errors the same way. `LeanToDotNet.Build` uses both, so a broken
+  proof is an entry in Visual Studio's or Rider's error list that opens the `.lean` file at the line.
+- Every function that cannot be compiled is reported, not only the first.
+- The package smoke test also breaks a proof and requires the clickable error.
+
 ## 0.3.0 (2026-09-27)
 
 What the review of 0.1 asked for: a bigger fragment and a stronger check on the compiler.

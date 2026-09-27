@@ -4,7 +4,7 @@ Compile Lean 4 definitions into your .NET project on every build.
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="LeanToDotNet.Build" Version="0.3.0" />
+  <PackageReference Include="LeanToDotNet.Build" Version="0.3.1" />
   <LeanProject Include="../lean" />
 </ItemGroup>
 ```

@@ -240,14 +240,14 @@ package and list your Lean project:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="LeanToDotNet.Build" Version="0.3.0" />
+  <PackageReference Include="LeanToDotNet.Build" Version="0.3.1" />
   <LeanProject Include="../lean" />
 </ItemGroup>
 ```
 
 `dotnet build` then runs `lake build` and lean2il (bundled in the package, Tenet included) before the C# compiler,
 references the proven assembly with its IntelliSense docs, and copies it to the output. A broken proof fails the
-.NET build with Lean's message. Nothing reruns until a `.lean` file changes. You need Lean and the .NET 10 SDK;
+.NET build with Lean's message at its line, in the form Visual Studio and Rider make clickable. Nothing reruns until a `.lean` file changes. You need Lean and the .NET 10 SDK;
 [`tests/package-smoke.sh`](tests/package-smoke.sh) does exactly this from scratch, in CI on Linux, macOS and
 Windows.
 

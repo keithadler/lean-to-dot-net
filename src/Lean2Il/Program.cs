@@ -25,6 +25,8 @@ internal static class Program
                                 agree (default 100; 0 skips it)
           --leanviz <url>       LeanViz site for the project; theorem names in the docs link there
           --source <url>        base URL of the Lean sources, for links to each theorem's line
+          --lake-build          run `lake build` in the project first
+          --msbuild             report errors as file(line,col): error CODE: text, for MSBuild and IDEs
           --version             print the version
           -h, --help            this text
 
@@ -39,12 +41,19 @@ internal static class Program
         }
         catch (CompileError e)
         {
-            Console.Error.WriteLine("lean2il: " + e.Message);
+            if (e.At is null)
+            {
+                Report.Summary(e.Message);
+            }
+            else
+            {
+                Report.Error(e.Message, e.At);
+            }
             return 2;
         }
         catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException or ArgumentException)
         {
-            Console.Error.WriteLine("lean2il: " + e.Message);
+            Report.Error(e.Message);
             if (e is FileNotFoundException && e.Message.Contains("cannot find module", StringComparison.Ordinal))
             {
                 Console.Error.WriteLine("  The .olean files may be stale: run `lake build` in the project and try again.");
@@ -68,6 +77,10 @@ internal static class Program
         }
         var total = Stopwatch.StartNew();
         string project = Path.GetFullPath(o.Project);
+        if (o.LakeBuild && LakeBuild.Run(project) != 0)
+        {
+            throw new CompileError("lake build failed; see Lean's errors above");
+        }
         string lib = Path.Combine(project, ".lake", "build", "lib", "lean");
         if (!Directory.Exists(lib))
         {
@@ -105,6 +118,7 @@ internal static class Program
 
         using var checker = new OleanChecker(search);
         checker.Load(own);
+        Report.Locate = n => Report.Find(n, own.Select(m => m.Module), m => checker.Modules[m].SourceRangeOf(n), project);
         var ownModules = own.Select(m => m.Module).ToHashSet();
         string lean = checker.Modules[own[0].Module].LeanVersion;
         Console.WriteLine($"lean2il: {own.Count} modules in {project} (Lean {lean})");
@@ -184,20 +198,51 @@ internal static class Program
             {
                 foreach (OleanCheckFailure f in r.Failures.Take(20))
                 {
-                    Console.Error.WriteLine($"  REJECTED {f.Module}: {f.Name}: {f.Message}");
+                    Report.Rejected(f.Module.ToString(), f.Name, f.Message);
                 }
                 throw new CompileError("Tenet rejected the project; nothing was emitted");
             }
         }
 
-        // 4. Compile: the exports, then every recursive helper they turned out to need.
-        var declared = exports.Select(compiler.Declare).ToList();
+        // 4. Compile: the exports, then every recursive helper they turned out to need. Every function that cannot
+        // be compiled is reported, not only the first, and then nothing is emitted.
+        var failures = new List<CompileError>();
+        var declared = new List<Export>();
+        foreach (Name n in exports)
+        {
+            try
+            {
+                declared.Add(compiler.Declare(n));
+            }
+            catch (CompileError ce)
+            {
+                failures.Add(new CompileError(ce.Message, ce.At ?? n));
+            }
+        }
         foreach (Export e in declared)
         {
-            compiler.CompileBody(e);
-            compiler.CompileDecimalOverload(e);
+            try
+            {
+                compiler.CompileBody(e);
+                compiler.CompileDecimalOverload(e);
+            }
+            catch (CompileError ce)
+            {
+                failures.Add(new CompileError(ce.Message, ce.At ?? e.Name));
+            }
         }
-        compiler.CompilePending();
+        if (failures.Count == 0)
+        {
+            compiler.CompilePending();
+        }
+        if (failures.Count > 0)
+        {
+            foreach (CompileError f in failures)
+            {
+                Report.Error(f.Message, f.At);
+            }
+            throw new CompileError($"{Plural(failures.Count, "function")} could not be compiled; nothing was emitted");
+        }
         var docs = new Docs(checker, env, compiler, ownModules, ownConstants, verdict, o, asmName);
         docs.Collect();
         compiler.Finish(docs.VerdictLine(), lean, docs.TheoremNames);
@@ -267,6 +312,7 @@ internal sealed class Options
     public string? LeanViz { get; private set; }
     public string? Source { get; private set; }
     public int Fuzz { get; private set; } = 100;
+    public bool LakeBuild { get; private set; }
 
     public static Options? Parse(string[] args)
     {
@@ -287,6 +333,8 @@ internal sealed class Options
                 case "--no-check": o.NoCheck = true; break;
                 case "--leanviz": o.LeanViz = Next(); break;
                 case "--source": o.Source = Next(); break;
+                case "--lake-build": o.LakeBuild = true; break;
+                case "--msbuild": Report.MsBuild = true; break;
                 case "--fuzz": o.Fuzz = int.TryParse(Next(), out int f) && f >= 0 ? f : throw new ArgumentException("--fuzz needs a number, 0 or more"); break;
                 default:
                     if (a.StartsWith('-'))

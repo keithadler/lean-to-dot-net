@@ -154,4 +154,28 @@ public class ShowcaseTests
         Assert.Equal(20, Proven.ItemAt(new BigInteger[] { 10, 20 }, 1).Value);
         Assert.False(Proven.ItemAt(new BigInteger[] { 10, 20 }, 2).IsSome);
     }
+
+    [Fact]
+    public void GeneratedTypesPrintAndCompareLikeRecords()
+    {
+        Tree t = Proven.OfList(new BigInteger[] { 2, 1 });
+        Assert.Equal("Node { Left = Node { Left = Leaf, Key = 1, Right = Leaf }, Key = 2, Right = Leaf }", t.ToString());
+        Assert.Equal(t, Proven.OfList(new BigInteger[] { 2, 1 }));
+        Assert.NotEqual(t, Proven.OfList(new BigInteger[] { 1, 2 }));
+        Assert.Equal(t.GetHashCode(), Proven.OfList(new BigInteger[] { 2, 1 }).GetHashCode());
+        Assert.Equal("Error { Message = \"cannot divide 7 by zero\" }", Proven.SafeDiv(7, 0).ToString());
+        Assert.Equal(new Arith.Num(5), Proven.Fold(new Arith.Add(new Arith.Num(2), new Arith.Num(3))));
+        Assert.Equal("PairOfIntInt { First = -1, Second = 8 }", Proven.MinMax(new BigInteger[] { 3, -1, 8 }).Value.ToString());
+    }
+
+    [Fact]
+    public void ParametersHaveNamesACallerCanUse()
+    {
+        string Names(string method) => string.Join(",", typeof(Proven).GetMethod(method)!.GetParameters().Select(p => p.Name));
+        Assert.Equal("k,tree", Names(nameof(Proven.Contains)));
+        Assert.Equal("env,arith", Names(nameof(Proven.Eval)));
+        Assert.Equal("items", Names(nameof(Proven.Total)));
+        Assert.Equal("n", Names(nameof(Proven.SumTo)));
+        Assert.True(Proven.Contains(k: 1, tree: Proven.OfList(new BigInteger[] { 1 })));
+    }
 }

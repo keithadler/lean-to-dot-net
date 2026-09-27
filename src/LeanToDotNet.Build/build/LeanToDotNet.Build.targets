@@ -44,15 +44,20 @@
 
   <Target Name="_LeanCompile" DependsOnTargets="_LeanInputs" Condition="'@(LeanProject)' != '' And '$(DesignTimeBuild)' != 'true'"
           Inputs="@(_LeanSource);$(Lean2IlPath);$(MSBuildProjectFullPath)" Outputs="$(_LeanOutRoot)stamp">
-    <Exec Condition="'$(LeanLakeBuild)' == 'true'" Command="lake build" WorkingDirectory="%(_LeanProjectDir.Identity)"
-          EnvironmentVariables="$(_LeanEnv)" CustomErrorRegularExpression="error:" />
     <PropertyGroup>
-      <_LeanFlags>--fuzz $(LeanFuzz)</_LeanFlags>
+      <_LeanFlags>--msbuild --fuzz $(LeanFuzz)</_LeanFlags>
+      <_LeanFlags Condition="'$(LeanLakeBuild)' == 'true'">$(_LeanFlags) --lake-build</_LeanFlags>
       <_LeanFlags Condition="'$(LeanCheckImports)' != 'true'">$(_LeanFlags) --trust-imports</_LeanFlags>
     </PropertyGroup>
     <RemoveDir Directories="%(_LeanProjectDir.OutDir)" />
+    <!-- lean2il prints Lean's errors, its own and Tenet's as file(line,col): error CODE: text, which Exec turns into
+         build errors that an IDE lists and opens at the line. Exec's own "exited with code" error would repeat the
+         whole command line; one short error instead stops the build before the C# compiler adds its own. -->
     <Exec Command="&quot;$(_LeanDotnet)&quot; exec &quot;$(Lean2IlPath)&quot; &quot;%(_LeanProjectDir.Identity)&quot; --out &quot;%(_LeanProjectDir.OutDir).&quot; $(_LeanFlags)%(_LeanProjectDir.Flags)"
-          EnvironmentVariables="$(_LeanEnv)" />
+          EnvironmentVariables="$(_LeanEnv)" IgnoreExitCode="true">
+      <Output TaskParameter="ExitCode" ItemName="_LeanExit" />
+    </Exec>
+    <Error Condition="'%(_LeanExit.Identity)' != '0'" Code="LEAN" Text="The Lean project did not compile; the errors above say where." />
     <Touch Files="$(_LeanOutRoot)stamp" AlwaysCreate="true" />
   </Target>
 

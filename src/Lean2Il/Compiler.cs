@@ -153,6 +153,57 @@ internal sealed class Compiler
         return parts.ToArray();
     }
 
+    /// <summary>
+    /// A C# parameter name for a Lean binder: its own name in camelCase, or, when Lean made it up (the argument a
+    /// definition by pattern matching takes, shown as <c>x✝</c>), a name from its type: <c>Tree tree</c>,
+    /// <c>LeanList&lt;T&gt; items</c>, <c>BigInteger n</c>. Never the same as an earlier one.
+    /// </summary>
+    private string ParamName(Name binder, Expr domain, Repr r, TypeChecker tc, HashSet<string> taken)
+    {
+        string raw = binder.ToString();
+        bool madeUp = binder.LastString is null || raw.Contains("_hyg", StringComparison.Ordinal) || raw.Contains('✝') || raw.StartsWith('_');
+        string name = madeUp
+            ? r.Kind switch
+            {
+                Kind.Nat => "n",
+                Kind.Int or Kind.Fixed => "value",
+                Kind.Bool => "flag",
+                Kind.String => "text",
+                Kind.List or Kind.Array => "items",
+                Kind.Option => "option",
+                _ when r.Layout is not null => Camel(Components(r.Layout.Name)[^1]),
+                _ => "arg",
+            }
+            : Camel(binder.LastString!);
+        if (name.Length == 0 || CSharpKeywords.Contains(name))
+        {
+            name += "Value";
+        }
+        string unique = name;
+        for (int i = 2; !taken.Add(unique); i++)
+        {
+            unique = name + i;
+        }
+        return unique;
+    }
+
+    private static string Camel(string s)
+    {
+        string p = Pascal(s);
+        return p.Length == 0 ? p : char.ToLowerInvariant(p[0]) + p[1..];
+    }
+
+    private static readonly HashSet<string> CSharpKeywords =
+    [
+        "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked", "class", "const", "continue",
+        "decimal", "default", "delegate", "do", "double", "else", "enum", "event", "explicit", "extern", "false", "finally",
+        "fixed", "float", "for", "foreach", "goto", "if", "implicit", "in", "int", "interface", "internal", "is", "lock",
+        "long", "namespace", "new", "null", "object", "operator", "out", "override", "params", "private", "protected",
+        "public", "readonly", "ref", "return", "sbyte", "sealed", "short", "sizeof", "stackalloc", "static", "string",
+        "struct", "switch", "this", "throw", "true", "try", "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort",
+        "using", "virtual", "void", "volatile", "while",
+    ];
+
     /// <summary>The .NET name of a Lean name: each component in PascalCase, the namespace kept.</summary>
     public static string ClrTypeName(Name n) => string.Join('.', Components(n).Select(Pascal));
 
@@ -415,6 +466,7 @@ internal sealed class Compiler
             st.Fields.AddRange(fields);
             st.SelfFields = self;
             st.Ctor = DefineCtor(tb, st.RuntimeFields, _clr.Object.GetConstructor(Type.EmptyTypes)!, null);
+            DefineDataMethods(tb);
             return st;
         }
         // A union: an abstract class with a Tag, and a sealed nested class per constructor.
@@ -440,6 +492,7 @@ internal sealed class Compiler
             _nested.Add(nt);
             var (fields, self) = DefineFields(nt, ctors[i], ind, levels, parms, tc);
             ConstructorBuilder cb = DefineCtor(nt, fields.Where(f => f.Field is not null).ToArray(), baseCtor, i);
+            DefineDataMethods(nt);
             un.Variants.Add(new Variant(ctors[i].Name, cn, nt, fields, cb, self));
         }
         return un;
@@ -485,6 +538,26 @@ internal sealed class Compiler
             t = ExprOps.Instantiate1(p.Body, tc.Lctx.MkLocalDecl(p.BinderName, p.Domain));
         }
         return (fields, self);
+    }
+
+    /// <summary>ToString, Equals and GetHashCode over the fields, through LeanToDotNet.Runtime.LeanData.</summary>
+    private void DefineDataMethods(TypeBuilder tb)
+    {
+        void Override(string name, Type result, Type[] ps, string helper)
+        {
+            MethodBuilder m = tb.DefineMethod(name, MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig, result, ps);
+            ILGenerator il = m.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            if (ps.Length == 1)
+            {
+                il.Emit(OpCodes.Ldarg_1);
+            }
+            il.Emit(OpCodes.Call, _clr.Static(_clr.LeanData, helper, [_clr.Object, .. ps]));
+            il.Emit(OpCodes.Ret);
+        }
+        Override("ToString", _clr.String, [], "Show");
+        Override("Equals", _clr.Bool, [_clr.Object], "Equal");
+        Override("GetHashCode", _clr.Int32, [], "Hash");
     }
 
     private ConstructorBuilder DefineCtor(TypeBuilder tb, FieldSlot[] rt, System.Reflection.ConstructorInfo baseCtor, int? tag)
@@ -715,6 +788,7 @@ internal sealed class Compiler
         }
         var tc = new TypeChecker(_env);
         var ps = new List<Param>();
+        var taken = new HashSet<string>();
         Expr t = def.Type;
         while (tc.Whnf(t) is PiExpr p)
         {
@@ -723,7 +797,7 @@ internal sealed class Compiler
             {
                 throw new CompileError($"{name}, parameter {p.BinderName}: {r.Why}");
             }
-            ps.Add(new Param(p.BinderName, p.BinderName.LastString ?? "arg", r));
+            ps.Add(new Param(p.BinderName, r.IsData ? ParamName(p.BinderName, p.Domain, r, tc, taken) : "_", r));
             t = ExprOps.Instantiate1(p.Body, tc.Lctx.MkLocalDecl(p.BinderName, p.Domain, p.Info));
         }
         Repr result = ReprOf(t, tc);

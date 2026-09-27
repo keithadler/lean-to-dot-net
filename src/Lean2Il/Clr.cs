@@ -46,6 +46,7 @@ internal sealed class Clr : IDisposable
     public Type LeanStackOverflow { get; }
     public Type LeanFixed { get; }
     public Type LeanArray { get; }
+    public Type LeanData { get; }
     public Type ILeanArray { get; }
     /// <summary>The .NET integer for each Lean fixed-width integer, by Lean name.</summary>
     public Dictionary<string, Type> Fixed { get; } = new();
@@ -83,6 +84,7 @@ internal sealed class Clr : IDisposable
         LeanStackOverflow = runtime.GetType("LeanToDotNet.Runtime.LeanStackOverflowException", throwOnError: true)!;
         LeanFixed = runtime.GetType("LeanToDotNet.Runtime.LeanFixed", throwOnError: true)!;
         LeanArray = runtime.GetType("LeanToDotNet.Runtime.LeanArray`1", throwOnError: true)!;
+        LeanData = runtime.GetType("LeanToDotNet.Runtime.LeanData", throwOnError: true)!;
         ILeanArray = runtime.GetType("LeanToDotNet.Runtime.ILeanArray", throwOnError: true)!;
         foreach (FixedWidth f in FixedWidth.All)
         {

@@ -50,14 +50,22 @@ With the `LeanToDotNet.Build` package, a .NET project compiles its Lean projects
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="LeanToDotNet.Build" Version="0.3.0" />
+  <PackageReference Include="LeanToDotNet.Build" Version="0.3.1" />
   <LeanProject Include="../lean" />
 </ItemGroup>
 ```
 
 Before the C# compiler runs, for each `LeanProject`: `lake build`, then lean2il into `obj/.../lean2il/<folder>/`.
 The emitted assembly is referenced (its XML docs beside it, for IntelliSense) and copied to the output with
-`LeanToDotNet.Runtime.dll`. Lean's errors are the build's errors. The step is skipped while no `.lean` file, lakefile
+`LeanToDotNet.Runtime.dll`. Lean's errors are the build's errors, at their place in the source:
+
+```
+Finance/Split.lean(78,70): error LEAN: Tactic `decide` proved that the proposition splitEven 1 4 = [0, 1, 0, 0] is false
+Finance/Scratch.lean(5,1): error L2IL001: Finance.half, parameter x: Float is not compiled yet: ...
+```
+
+so Visual Studio, Rider and the C# Dev Kit list them with the rest and open the `.lean` file at the line. (That is
+lean2il's `--lake-build --msbuild`, which you can use in any build script.) The step is skipped while no `.lean` file, lakefile
 or `lean-toolchain` has changed, and in IDE design-time builds, which use the last assembly.
 
 | Property | Default | |
@@ -87,6 +95,8 @@ lean2il <lake-project> [options]
 | `--fuzz <n>` | `100` | Random inputs per export, run by Lean's own compiler and by the IL, which must agree. `0` skips it. |
 | `--leanviz <url>` | none | A LeanViz site for the project; theorem names in the docs link there. |
 | `--source <url>` | none | Base URL of the Lean sources; each theorem links to its lines. |
+| `--lake-build` | off | Run `lake build` in the project first. |
+| `--msbuild` | off | Report errors as `File.lean(line,col): error CODE: text`, which MSBuild and IDEs place in the source. |
 
 The project must be built (`lake build`) first. lean2il reads `.lake/build/lib/lean`, and the `.olean` files of
 any Lake dependencies under `.lake/packages`.
@@ -115,7 +125,7 @@ any Lake dependencies under `.lake/packages`.
 | `UInt8`, `UInt16`, `UInt32`, `UInt64` | `byte`, `ushort`, `uint`, `ulong` |
 | `Int8`, `Int16`, `Int32`, `Int64` | `sbyte`, `short`, `int`, `long` |
 | an inductive whose constructors take no arguments | a .NET `enum`, cases in the same order |
-| a structure | a sealed class with a constructor and one public read-only field per field |
+| a structure | a sealed class with a constructor and one public read-only field per field; it prints like a C# record (`Pair { First = 1, Second = 2 }`) and `Equals` compares the fields |
 | any other inductive: several constructors with data, or recursive | an abstract class with an `int Tag`, and a sealed nested class per constructor: `new Arith.Add(new Arith.Num(2), new Arith.Var(0))` |
 | a type with parameters | one class per instantiation: `Pair Int String` is `PairOfIntString`, `Int × Int` is `ProdOfIntInt` |
 | `Fin n`, a subtype `{x // p x}` | the value alone, as Lean's compiler does: `BigInteger`, or the type of `x`. A caller passing one in keeps the promise the proof made; the differential test skips such functions |

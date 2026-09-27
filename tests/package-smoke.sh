@@ -53,3 +53,15 @@ if [[ "$got" != "$want" ]]; then
   exit 1
 fi
 echo "package smoke test: a new project built the Lean with LeanToDotNet.Build and got the proved answers"
+
+# A broken proof has to fail the .NET build with Lean's message at its place in the source, in the form IDEs link.
+sed -i.bak 's/splitEven 1 4 = \[1, 0, 0, 0\]/splitEven 1 4 = [0, 1, 0, 0]/' ../lean/Finance/Split.lean
+if out=$(dotnet build -nologo 2>&1); then
+  echo "package smoke test: the build passed with a broken proof" >&2
+  exit 1
+fi
+if ! grep -qE 'Split\.lean\([0-9]+,[0-9]+\): error LEAN: Tactic `decide` proved that the proposition' <<<"$out"; then
+  printf 'package smoke test: no clickable Lean error in the build output:\n%s\n' "$out" >&2
+  exit 1
+fi
+echo "package smoke test: a broken proof fails dotnet build with a clickable Lean error"

@@ -139,4 +139,8 @@ internal sealed class Layout
 }
 
 /// <summary>A reason the input cannot be compiled, meant for the person who wrote the Lean.</summary>
-internal sealed class CompileError(string message) : Exception(message);
+internal sealed class CompileError(string message, Name? at = null) : Exception(message)
+{
+    /// <summary>The declaration the error is about, when there is one: it gives the error a place in the source.</summary>
+    public Name? At { get; } = at;
+}
