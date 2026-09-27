@@ -167,6 +167,6 @@ otherwise round to nearest; the last three are directed and ignore midpoints alt
 - Lean's kernel, which accepted every proof when the project was built.
 - Every proof was re-checked by Tenet, an independent Lean kernel: 231 declarations in 4 modules, the project's own modules, none rejected (Lean 4.33.1).
 - The axioms listed next to each theorem. `propext`, `Quot.sound` and `Classical.choice` are Lean's standard three; `sorryAx` would mean an unfinished proof and lean2il reports it.
-- lean2il's translation from the kernel term to IL, which the proved examples above test on every build, along with random inputs compared against Lean's own compiler, and `LeanToDotNet.Runtime`: `BigInteger` arithmetic with Lean's meaning for `Nat` and `Int`, and the exact `decimal` conversion.
+- lean2il's translation from the kernel term to IL, which the proved examples above test on every build, along with random inputs compared against Lean's own compiler, and `LeanToDotNet.Runtime`: `BigInteger` arithmetic with Lean's meaning for `Nat` and `Int`, Lean's meaning for fixed-width integers where it differs from C#'s (division by zero, shift counts), and the exact `decimal` conversion.
 - For recursive functions, the equation lemmas Lean proves for them (`f.eq_def`), which Tenet re-checks with everything else; each method is compiled from its equation's right-hand side.
 

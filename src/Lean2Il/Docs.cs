@@ -71,11 +71,14 @@ internal sealed partial class Docs
     private abstract record Val;
     private sealed record Num(BigInteger V) : Val;
     private sealed record BoolV(bool V) : Val;
+    private sealed record Fix(FixedWidth F, BigInteger V) : Val;
     private sealed record EnumV(Layout L, int Index) : Val;
     private sealed record StructV(Layout L, Val[] Fields) : Val;
     private sealed record StrV(string V) : Val;
     private sealed record ListV(Val[] Items) : Val;
+    private sealed record ArrV(Val[] Items) : Val;
     private sealed record OptV(Val? V) : Val;
+    private sealed record UnionV(Layout L, int Variant, Val[] Fields) : Val;
 
     // ------------------------------------------------------------------ collecting
 
@@ -234,7 +237,18 @@ internal sealed partial class Docs
             return null;
         }
         BigInteger? Arg(int i) => i < args.Length && Eval(args[i], reducer) is Num x ? x.V : null;
-        switch (c.Name.ToString())
+        string cn = c.Name.ToString();
+        if (cn.LastIndexOf('.') is int dot and > 0 && FixedWidth.OfLean(cn[..dot]) is FixedWidth fw)
+        {
+            Val? Fx(int i) => i < args.Length ? Eval(args[i], reducer) : null;
+            switch (cn[(dot + 1)..])
+            {
+                case "ofNat" or "ofInt": return Arg(0) is BigInteger k ? new Fix(fw, fw.Wrap(k)) : null;
+                case "neg": return Fx(0) is Fix x ? new Fix(fw, fw.Wrap(-x.V)) : null;
+            }
+            return null;
+        }
+        switch (cn)
         {
             case "Int.ofNat": return Arg(0) is BigInteger a ? new Num(a) : null;
             case "Int.negSucc": return Arg(0) is BigInteger b ? new Num(-(b + 1)) : null;
@@ -246,10 +260,24 @@ internal sealed partial class Docs
             case "List.nil": return new ListV([]);
             case "List.cons":
                 return args.Length == 3 && Eval(args[1], reducer) is Val h && Eval(args[2], reducer) is ListV t ? new ListV([h, .. t.Items]) : null;
+            case "Array.mk": return args.Length == 2 && Eval(args[1], reducer) is ListV items ? new ArrV(items.Items) : null;
             case "Option.none": return new OptV(null);
             case "Option.some": return args.Length == 2 && Eval(args[1], reducer) is Val v1 ? new OptV(v1) : null;
         }
-        if (_env.Find(c.Name) is not ConstructorInfo ci || _compiler.LayoutOf(ci.Induct) is not Layout l)
+        if (_env.Find(c.Name) is not ConstructorInfo ci)
+        {
+            return null;
+        }
+        Layout? l;
+        try
+        {
+            l = _compiler.ReprOf(reducer.Tc.Infer(e), reducer.Tc).Layout;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+        if (l is null)
         {
             return null;
         }
@@ -257,10 +285,11 @@ internal sealed partial class Docs
         {
             return new EnumV(l, ci.Cidx);
         }
+        List<FieldSlot> slots = l.Kind == Kind.Union ? l.Variants[ci.Cidx].Fields : l.Fields;
         var fields = new List<Val>();
         for (int i = 0; i < ci.NumFields; i++)
         {
-            if (l.Fields[i].Field is null)
+            if (slots[i].Field is null)
             {
                 continue;
             }
@@ -270,7 +299,7 @@ internal sealed partial class Docs
             }
             fields.Add(v);
         }
-        return new StructV(l, fields.ToArray());
+        return l.Kind == Kind.Union ? new UnionV(l, ci.Cidx, fields.ToArray()) : new StructV(l, fields.ToArray());
     }
 
     // ------------------------------------------------------------------ replaying the examples against the IL
@@ -333,8 +362,10 @@ internal sealed partial class Docs
         Kind.Nat or Kind.Int => typeof(BigInteger),
         Kind.Bool => typeof(bool),
         Kind.String => typeof(string),
+        Kind.Fixed => Type.GetType(FixedWidth.OfClr(r.ClrType).Clr, true)!,
         Kind.List => RuntimeAssembly(asm).GetType("LeanToDotNet.Runtime.LeanList`1", true)!.MakeGenericType(RuntimeType(r.Elem!, asm)),
         Kind.Option => RuntimeAssembly(asm).GetType("LeanToDotNet.Runtime.LeanOption`1", true)!.MakeGenericType(RuntimeType(r.Elem!, asm)),
+        Kind.Array => RuntimeAssembly(asm).GetType("LeanToDotNet.Runtime.LeanArray`1", true)!.MakeGenericType(RuntimeType(r.Elem!, asm)),
         _ => asm.GetType(r.Layout!.ClrName, true)!,
     };
 
@@ -345,7 +376,9 @@ internal sealed partial class Docs
     {
         Num n => decimalForm && r.Kind == Kind.Nat ? (object)(int)n.V : n.V,
         StrV str => str.V,
+        Fix f => f.F.Box(f.V),
         ListV l => ListOf(l, r, asm),
+        ArrV a => ListOf(new ListV(a.Items), r, asm),
         OptV o => o.V is null
             ? RuntimeType(r, asm).GetProperty("None")!.GetValue(null)!
             : RuntimeType(r, asm).GetMethod("Some")!.Invoke(null, [ToClr(o.V, r.Elem!, asm, false)])!,
@@ -353,6 +386,8 @@ internal sealed partial class Docs
         EnumV e => Enum.ToObject(asm.GetType(e.L.ClrName, true)!, e.Index),
         StructV s when decimalForm && s.L.DecimalShaped => Runtime.DecimalBridge.FromParts(((Num)s.Fields[0]).V, ((Num)s.Fields[1]).V),
         StructV s => Activator.CreateInstance(asm.GetType(s.L.ClrName, true)!, s.Fields.Select((f, i) => ToClr(f, s.L.RuntimeFields[i].Repr, asm, false)).ToArray())!,
+        UnionV u => Activator.CreateInstance(asm.GetType(u.L.ClrName + "+" + u.L.Variants[u.Variant].ClrName, true)!,
+            u.Fields.Select((f, i) => ToClr(f, u.L.Variants[u.Variant].RuntimeFields[i].Repr, asm, false)).ToArray())!,
         _ => throw new InvalidOperationException(),
     };
 
@@ -372,12 +407,16 @@ internal sealed partial class Docs
         (string g, StrV w) => g == w.V,
         (System.Collections.IEnumerable g, ListV w) when got is not string => g.Cast<object?>().ToArray() is object?[] a
             && a.Length == w.Items.Length && a.Select((x, i) => Same(x, w.Items[i], false)).All(x => x),
+        (System.Collections.IEnumerable, ArrV w) when got is not string => Same(got, new ListV(w.Items), false),
         (not null, OptV w) => (bool)got.GetType().GetProperty("IsSome")!.GetValue(got)! == (w.V is not null)
             && (w.V is null || Same(got.GetType().GetProperty("Value")!.GetValue(got), w.V, false)),
         (BigInteger g, Num w) => g == w.V,
         (bool g, BoolV w) => g == w.V,
+        (not null, Fix w) => got.GetType().FullName == w.F.Clr && Convert.ToString(got, System.Globalization.CultureInfo.InvariantCulture) == w.V.ToString(),
         (Enum g, EnumV w) => Convert.ToInt32(g) == w.Index,
         (decimal g, StructV w) => Runtime.DecimalBridge.Mantissa(g) == ((Num)w.Fields[0]).V && g.Scale == ((Num)w.Fields[1]).V,
+        (not null, UnionV w) => (int)got.GetType().GetField("Tag")!.GetValue(got)! == w.Variant
+            && w.L.Variants[w.Variant].RuntimeFields.Select((f, i) => Same(got.GetType().GetField(f.ClrName)!.GetValue(got), w.Fields[i], false)).All(x => x),
         (not null, StructV w) => w.L.RuntimeFields.Select((f, i) => Same(got.GetType().GetField(f.ClrName)!.GetValue(got), w.Fields[i], false)).All(x => x),
         _ => false,
     };
@@ -399,12 +438,17 @@ internal sealed partial class Docs
         ListV l when r?.Elem is Repr el => l.Items.Length == 0 ? $"new {TypeName(el, false)}[0]"
             : $"new {TypeName(el, false)}[] {{ {string.Join(", ", l.Items.Select(x => CSharp(x, false, el)))} }}",
         ListV l => "[" + string.Join(", ", l.Items.Select(x => CSharp(x, false))) + "]",
+        ArrV a => CSharp(new ListV(a.Items), false, r),
         OptV o => o.V is null ? "none" : "some " + CSharp(o.V, false),
         Num n => n.V >= long.MinValue && n.V <= long.MaxValue ? n.V.ToString() : $"BigInteger.Parse(\"{n.V}\")",
         BoolV b => b.V ? "true" : "false",
+        Fix f when f.V == f.F.Min && f.F.Signed => $"{f.F.CSharp}.MinValue",
+        Fix f when f.V.Sign < 0 => $"({f.F.CSharp})({f.V})",
+        Fix f => f.F.Bits < 32 ? $"({f.F.CSharp}){f.V}" : f.V + (f.F.Bits, f.F.Signed) switch { (32, false) => "u", (64, false) => "ul", (64, true) => "L", _ => "" },
         EnumV e => $"{Short(e.L.ClrName)}.{e.L.Cases[e.Index].ClrName}",
         StructV s when decimalForm && s.L.DecimalShaped => DecimalLiteral(((Num)s.Fields[0]).V, ((Num)s.Fields[1]).V) + "m",
         StructV s => $"new {Short(s.L.ClrName)}({string.Join(", ", s.Fields.Select(f => CSharp(f, false)))})",
+        UnionV u => $"new {Short(u.L.ClrName)}.{u.L.Variants[u.Variant].ClrName}({string.Join(", ", u.Fields.Select((f, i) => CSharp(f, false, u.L.Variants[u.Variant].RuntimeFields[i].Repr)))})",
         _ => "?",
     };
 
@@ -421,8 +465,10 @@ internal sealed partial class Docs
             Kind.Nat or Kind.Int => "BigInteger",
             Kind.Bool => "bool",
             Kind.String => "string",
+            Kind.Fixed => FixedWidth.OfClr(r.ClrType).CSharp,
             Kind.List => $"LeanList<{TypeName(r.Elem!, false)}>",
             Kind.Option => $"LeanOption<{TypeName(r.Elem!, false)}>",
+            Kind.Array => $"LeanArray<{TypeName(r.Elem!, false)}>",
             _ => Short(r.Layout!.ClrName),
         };
 
@@ -445,6 +491,8 @@ internal sealed partial class Docs
     {
         StructV s when decimalForm && s.L.DecimalShaped => DecimalLiteral(((Num)s.Fields[0]).V, ((Num)s.Fields[1]).V),
         ListV l => "[" + string.Join(", ", l.Items.Select(x => ResultComment(x, false))) + "]",
+        ArrV a => "[" + string.Join(", ", a.Items.Select(x => ResultComment(x, false))) + "]",
+        Fix f => f.V.ToString(),
         _ => CSharp(v, decimalForm),
     };
 
@@ -577,8 +625,10 @@ internal sealed partial class Docs
             Kind.Nat or Kind.Int => "System.Numerics.BigInteger",
             Kind.Bool => "System.Boolean",
             Kind.String => "System.String",
+            Kind.Fixed => FixedWidth.OfClr(r.ClrType).Clr,
             Kind.List => "LeanToDotNet.Runtime.LeanList{" + DocId(r.Elem!, false) + "}",
             Kind.Option => "LeanToDotNet.Runtime.LeanOption{" + DocId(r.Elem!, false) + "}",
+            Kind.Array => "LeanToDotNet.Runtime.LeanArray{" + DocId(r.Elem!, false) + "}",
             _ => r.Layout!.ClrName,
         };
 
@@ -586,9 +636,11 @@ internal sealed partial class Docs
     {
         Kind.Nat => dec ? "A Lean Nat: zero or more. A negative value throws ArgumentOutOfRangeException." : "A Lean Nat: zero or more. A negative BigInteger throws ArgumentOutOfRangeException.",
         Kind.Int => "A Lean Int.",
+        Kind.Fixed => $"A Lean {FixedWidth.OfClr(p.Repr.ClrType).Lean}: the same bits as a {FixedWidth.OfClr(p.Repr.ClrType).CSharp}.",
         Kind.String => "A Lean String.",
         Kind.List => $"A Lean List. Pass a LeanList, or an array, which converts to one.",
         Kind.Option => "A Lean Option.",
+        Kind.Array => "A Lean Array. Pass a LeanArray, or a .NET array, which converts to one.",
         Kind.Struct when dec && p.Repr.Layout!.DecimalShaped => $"The value, as a decimal. It becomes a {p.Repr.Layout.Name} with the same mantissa and scale.",
         _ => $"A Lean {p.LeanName}.",
     };
@@ -691,14 +743,19 @@ internal sealed partial class Docs
                 sb.AppendLine();
                 sb.AppendLine(DocOf(l.Name) ?? $"The Lean type `{l.Name}`.");
                 sb.AppendLine();
+                string Item(string code, Name n) => DocOf(n) is string d ? $"- `{code}`: {d.Replace('\n', ' ')}" : $"- `{code}`";
                 foreach (var (ctor, cn, _) in l.Cases)
                 {
-                    sb.AppendLine($"- `{cn}`: {DocOf(ctor)?.Replace('\n', ' ') ?? ""}");
+                    sb.AppendLine(Item(cn, ctor));
+                }
+                foreach (Variant v in l.Variants)
+                {
+                    string fields = string.Join(", ", v.RuntimeFields.Select(f => $"{TypeName(f.Repr, false)} {f.ClrName}"));
+                    sb.AppendLine(Item($"new {Short(l.ClrName)}.{v.ClrName}({fields})", v.Ctor));
                 }
                 foreach (FieldSlot f in l.RuntimeFields)
                 {
-                    string t = f.Repr.Kind switch { Kind.Nat or Kind.Int => "BigInteger", Kind.Bool => "bool", _ => Short(f.Repr.Layout!.ClrName) };
-                    sb.AppendLine($"- `{t} {f.ClrName}`: {DocOf(f.Name)?.Replace('\n', ' ') ?? ""}");
+                    sb.AppendLine(Item($"{TypeName(f.Repr, false)} {f.ClrName}", f.Name));
                 }
                 if (l.DecimalShaped)
                 {
@@ -713,7 +770,7 @@ internal sealed partial class Docs
         sb.AppendLine("- Lean's kernel, which accepted every proof when the project was built.");
         sb.AppendLine("- " + VerdictLine());
         sb.AppendLine("- The axioms listed next to each theorem. `propext`, `Quot.sound` and `Classical.choice` are Lean's standard three; `sorryAx` would mean an unfinished proof and lean2il reports it.");
-        sb.AppendLine("- lean2il's translation from the kernel term to IL, which the proved examples above test on every build" + (DifferentialLine is not null ? ", along with random inputs compared against Lean's own compiler" : "") + ", and `LeanToDotNet.Runtime`: `BigInteger` arithmetic with Lean's meaning for `Nat` and `Int`, and the exact `decimal` conversion.");
+        sb.AppendLine("- lean2il's translation from the kernel term to IL, which the proved examples above test on every build" + (DifferentialLine is not null ? ", along with random inputs compared against Lean's own compiler" : "") + ", and `LeanToDotNet.Runtime`: `BigInteger` arithmetic with Lean's meaning for `Nat` and `Int`, Lean's meaning for fixed-width integers where it differs from C#'s (division by zero, shift counts), and the exact `decimal` conversion.");
         sb.AppendLine("- For recursive functions, the equation lemmas Lean proves for them (`f.eq_def`), which Tenet re-checks with everything else; each method is compiled from its equation's right-hand side.");
         sb.AppendLine();
         return sb.ToString();

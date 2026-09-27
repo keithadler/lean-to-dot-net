@@ -13,7 +13,7 @@ namespace LeanToDotNet;
 /// natively for the same reason. Each entry is the whole semantic claim lean2il makes about that constant, and the
 /// test suite checks every one against Lean's own <c>#eval</c> output (<c>tests/PrimitiveTests.cs</c>).
 /// </summary>
-internal sealed record Primitive(Name Name, int[] Args, Kind Result, Action<ILGenerator> Emit);
+internal sealed record Primitive(Name Name, int[] Args, Kind Result, Action<ILGenerator> Emit, Type? ResultClr = null);
 
 internal static class Primitives
 {
@@ -78,6 +78,54 @@ internal static class Primitives
         Add("instDecidableEqString", a01, Kind.Bool, clr.Static(clr.LeanString, "DecEq", clr.String, clr.String));
         Add("Nat.repr", a0, Kind.String, clr.Static(clr.LeanNat, "Repr", clr.BigInteger));
         Add("Int.repr", a0, Kind.String, clr.Static(clr.LeanInt, "Repr", clr.BigInteger));
+
+        // UInt8 ... UInt64, Int8 ... Int64. Their operations are the .NET integer operations except where Lean's meaning
+        // differs, and LeanFixed holds every one so the difference lives in one place with its reason.
+        foreach (FixedWidth f in FixedWidth.All)
+        {
+            Type ft = clr.Fixed[f.Lean];
+            void Fx(string op, int[] args, Kind result, Type? resultClr, params Type[] ps) =>
+                t[Name.Parse($"{f.Lean}.{op}")] = new Primitive(Name.Parse($"{f.Lean}.{op}"), args, result,
+                    il => il.Emit(OpCodes.Call, clr.Static(clr.LeanFixed, f.Lean + char.ToUpperInvariant(op[0]) + op[1..], ps)), resultClr);
+            foreach (string op in new[] { "add", "sub", "mul", "div", "mod", "land", "lor", "xor", "shiftLeft", "shiftRight" })
+            {
+                Fx(op, a01, Kind.Fixed, ft, ft, ft);
+            }
+            Fx("neg", a0, Kind.Fixed, ft, ft);
+            Fx("complement", a0, Kind.Fixed, ft, ft);
+            foreach (string op in new[] { "decEq", "decLt", "decLe" })
+            {
+                Fx(op, a01, Kind.Bool, null, ft, ft);
+            }
+            Fx("ofNat", a0, Kind.Fixed, ft, clr.BigInteger);
+            if (f.Signed)
+            {
+                Fx("ofInt", a0, Kind.Fixed, ft, clr.BigInteger);
+                Fx("toInt", a0, Kind.Int, null, ft);
+                Fx("toNatClampNeg", a0, Kind.Nat, null, ft);
+            }
+            else
+            {
+                Fx("toNat", a0, Kind.Nat, null, ft);
+            }
+            // Conversions between widths wrap, and sign-extend from a signed source: exactly the IL conv opcodes.
+            foreach (FixedWidth g in FixedWidth.All.Where(g => g != f))
+            {
+                string conv = $"{f.Lean}.to{g.Lean}";
+                OpCode code = (g.Bits, g.Signed) switch
+                {
+                    (8, false) => OpCodes.Conv_U1, (16, false) => OpCodes.Conv_U2, (32, false) => OpCodes.Conv_U4, (64, false) => OpCodes.Conv_U8,
+                    (8, true) => OpCodes.Conv_I1, (16, true) => OpCodes.Conv_I2, (32, true) => OpCodes.Conv_I4, _ => OpCodes.Conv_I8,
+                };
+                // A source narrower than 64 bits sits on the stack as an int32; widening an unsigned one to 64 bits
+                // must zero-extend it, which conv.u8 does and conv.i8 would not.
+                if (code == OpCodes.Conv_I8 && !f.Signed)
+                {
+                    code = OpCodes.Conv_U8;
+                }
+                t[Name.Parse(conv)] = new Primitive(Name.Parse(conv), a0, Kind.Fixed, il => il.Emit(code), clr.Fixed[g.Lean]);
+            }
+        }
 
         // Bool
         AddIl("Bool.decEq", a01, Kind.Bool, il => il.Emit(OpCodes.Ceq));

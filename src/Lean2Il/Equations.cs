@@ -19,13 +19,34 @@ internal static partial class Equations
 {
     public const string ModuleName = "Lean2IlEqns";
 
-    public sealed record Result(Dictionary<Name, Expr> ByDefinition, (Name Module, string Path)? Module, List<Name> Failed);
+    public sealed record Result(Dictionary<Name, Expr> ByDefinition, (Name Module, string Path)? Module, List<Name> Failed)
+    {
+        /// <summary>For each replaced definition: the proved right-hand side, over the theorem's universe names.</summary>
+        public Dictionary<Name, (Expr Rhs, Name[] Levels)> Replaced { get; } = new();
+    }
+
+    /// <summary>
+    /// Library definitions compiled from a proved restatement instead of their own definition, because that goes
+    /// through a <c>private</c> helper whose equation lemma cannot be named from outside its module. Each is a
+    /// theorem <c>f = rhs</c> in the equations module, proved by Lean and re-checked by Tenet like everything else.
+    /// </summary>
+    public sealed record Replacement(string Universes, string Rhs, string Proof, string[] Uses);
+
+    public static readonly Dictionary<string, Replacement> Replacements = new()
+    {
+        ["Array.map"] = new("u, v", "fun (α : Type u) (β : Type v) (f : α → β) (xs : Array α) => (xs.toList.map f).toArray",
+            "funext α β f xs; apply Array.toList_inj.mp; simp", ["List.map", "List.toArray", "Array.toList"]),
+        ["Array.mapIdx"] = new("u, v", "fun (α : Type u) (β : Type v) (f : Nat → α → β) (xs : Array α) => (xs.toList.mapIdx f).toArray",
+            "funext α β f xs; apply Array.toList_inj.mp; simp", ["List.mapIdx", "List.toArray", "Array.toList"]),
+        ["Array.range"] = new("", "fun (n : Nat) => (List.range n).toArray",
+            "funext n; apply Array.toList_inj.mp; simp", ["List.range", "List.toArray"]),
+    };
 
     /// <summary>Ask Lean for the equations; returns the module to load and check, or none when nothing is recursive.</summary>
-    public static Result Generate(string project, IReadOnlyCollection<Name> recursive, IEnumerable<Name> projectModules, string leanVersion)
+    public static Result Generate(string project, IReadOnlyCollection<Name> recursive, IReadOnlyCollection<Name> replaced, IEnumerable<Name> projectModules, string leanVersion)
     {
         var failed = new List<Name>();
-        if (recursive.Count == 0)
+        if (recursive.Count == 0 && replaced.Count == 0)
         {
             return new Result(new(), null, failed);
         }
@@ -34,7 +55,7 @@ internal static partial class Equations
         Directory.CreateDirectory(build);
         string source = Path.Combine(dir, ModuleName + ".lean");
         string olean = Path.Combine(build, ModuleName + ".olean");
-        var names = recursive.OrderBy(n => n.ToString(), StringComparer.Ordinal).ToList();
+        var names = recursive.Concat(replaced).OrderBy(n => n.ToString(), StringComparer.Ordinal).ToList();
 
         for (int attempt = 0; attempt < 3 && names.Count > 0; attempt++)
         {
@@ -91,7 +112,11 @@ internal static partial class Equations
             if (body.IsAppOfArity(Name.Parse("Eq"), 3))
             {
                 body.GetAppArgs(out Expr[] eq);
-                if (eq[1].GetAppFn() is ConstExpr c && recursive.Contains(c.Name))
+                if (t.Type is not PiExpr && eq[1] is ConstExpr f && Replacements.ContainsKey(f.Name.ToString()))
+                {
+                    r.Replaced[f.Name] = (eq[2], t.LevelParams);
+                }
+                else if (eq[1].GetAppFn() is ConstExpr c && recursive.Contains(c.Name))
                 {
                     r.ByDefinition[c.Name] = t.Type;
                 }
@@ -111,6 +136,12 @@ internal static partial class Equations
         sb.AppendLine("namespace " + ModuleName);
         for (int i = 0; i < names.Count; i++)
         {
+            if (Replacements.TryGetValue(names[i].ToString(), out Replacement? rep))
+            {
+                string us = rep.Universes.Length > 0 ? ".{" + rep.Universes + "}" : "";
+                sb.AppendLine($"theorem r{i}{us} : @{Ident(names[i])}{us} = {rep.Rhs} := by {rep.Proof}");
+                continue;
+            }
             string eq = "@" + Ident(Name.Parse(names[i] + ".eq_def"));
             sb.AppendLine($"theorem e{i} : type_of% {eq} := {eq}");
         }

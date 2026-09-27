@@ -139,12 +139,14 @@ internal static class Program
         var pab = new PersistedAssemblyBuilder(new AssemblyName(asmName) { Version = new Version(1, 0, 0, 0) }, clr.CoreAssembly);
         ModuleBuilder mb = pab.DefineDynamicModule(asmName);
         var equations = new Dictionary<Name, Expr>();
-        var compiler = new Compiler(checker, env, clr, mb, ns, o.Class, ownConstants, equations);
+        var replacements = new Dictionary<Name, (Expr Rhs, Name[] Levels)>();
+        var compiler = new Compiler(checker, env, clr, mb, ns, o.Class, ownConstants, equations, replacements);
 
         // 2. Recursive definitions: ask Lean for their equation lemmas, in a module Tenet will check with the rest.
-        var recursive = compiler.RecursiveReachableFrom(exports);
+        var replaced = new HashSet<Name>();
+        var recursive = compiler.RecursiveReachableFrom(exports, replaced);
         var checkTargets = own.Select(m => m.Module).ToList();
-        Equations.Result eqns = Equations.Generate(project, recursive, ownModules, lean);
+        Equations.Result eqns = Equations.Generate(project, recursive, replaced, ownModules, lean);
         if (eqns.Module is { } eqModule)
         {
             search.Add(Path.GetDirectoryName(eqModule.Path)!);
@@ -154,6 +156,14 @@ internal static class Program
             foreach (var (k, v) in eqns.ByDefinition)
             {
                 equations[k] = v;
+            }
+            foreach (var (k, v) in eqns.Replaced)
+            {
+                replacements[k] = v;
+            }
+            if (replacements.Count > 0)
+            {
+                Console.WriteLine($"lean2il: {Plural(replacements.Count, "library definition")} compiled from a restatement Lean proved: {string.Join(", ", replacements.Keys.Select(k => k.ToString()).Order())}");
             }
             Console.WriteLine($"lean2il: {Plural(equations.Count, "recursive definition")}, compiled from equation lemmas Lean proved: {string.Join(", ", equations.Keys.Select(k => k.ToString()).Order())}");
         }

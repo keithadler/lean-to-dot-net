@@ -44,6 +44,14 @@ internal sealed class Export
     public Expr?[]? Fixed { get; init; }
 
     /// <summary>
+    /// For a helper specialized to a lambda that uses local variables: those variables, as extra parameters after
+    /// the helper's own. Each fixed argument is closed over all of them, so the body applies it to them. This is how
+    /// <c>xs.map (fun x => x + k)</c> compiles without a delegate: <c>k</c> becomes a parameter of the copy of
+    /// <c>List.map</c> made for that lambda.
+    /// </summary>
+    public List<(Name Name, Expr Type, Repr Repr)> Captures { get; init; } = [];
+
+    /// <summary>
     /// For a recursive definition: the statement of its equation lemma, <c>∀ xs, f xs = rhs</c>, proved by Lean and
     /// re-checked by Tenet. The method's body is compiled from <c>rhs</c>, where the recursive calls are ordinary calls.
     /// </summary>
@@ -80,13 +88,14 @@ internal sealed class Compiler
     private readonly Clr _clr;
     private readonly ModuleBuilder _module;
     private readonly Dictionary<Name, Primitive> _prims;
-    private readonly Dictionary<Name, Layout?> _layouts = new();
-    private readonly Dictionary<Name, string> _layoutFailures = new();
+    private readonly Dictionary<string, Layout?> _layouts = new();
+    private readonly Dictionary<string, string> _layoutFailures = new();
     private readonly Dictionary<Name, Export> _exports = new();
     /// <summary>Every compiled function, keyed by name and specialization: the exports and the helpers they need.</summary>
     private readonly Dictionary<string, Export> _functions = new();
     private readonly Queue<Export> _pending = new();
     private readonly IReadOnlyDictionary<Name, Expr> _equations;
+    internal readonly IReadOnlyDictionary<Name, (Expr Rhs, Name[] Levels)> _replacements;
     private readonly string _namespace;
     private readonly TypeBuilder _class;
     private readonly MethodInfo _bigFromLong;
@@ -101,10 +110,11 @@ internal sealed class Compiler
     private readonly HashSet<Name> _own;
 
     public Compiler(OleanChecker loader, Environment env, Clr clr, ModuleBuilder module, string ns, string className, HashSet<Name> own,
-        IReadOnlyDictionary<Name, Expr> equations)
+        IReadOnlyDictionary<Name, Expr> equations, IReadOnlyDictionary<Name, (Expr Rhs, Name[] Levels)> replacements)
     {
         _own = own;
         _equations = equations;
+        _replacements = replacements;
         _loader = loader;
         _env = env;
         _clr = clr;
@@ -183,7 +193,16 @@ internal sealed class Compiler
                 case "Bool": return new Repr(Kind.Bool, _clr.Bool);
                 case "Decidable": return new Repr(Kind.Bool, _clr.Bool);
                 case "String": return new Repr(Kind.String, _clr.String);
-                case "List" or "Option":
+                case "UInt8" or "UInt16" or "UInt32" or "UInt64" or "Int8" or "Int16" or "Int32" or "Int64":
+                    return new Repr(Kind.Fixed, _clr.Fixed[c.Name.ToString()]);
+                // A value and a proof about it: at run time just the value, as in Lean's own compiler.
+                case "Fin": return new Repr(Kind.Nat, _clr.BigInteger) { Constrained = true };
+                case "Subtype":
+                {
+                    w.GetAppArgs(out Expr[] sargs);
+                    return sargs.Length == 2 ? ReprOf(sargs[0], tc) with { Constrained = true } : new Repr(Kind.Unsupported, Why: "unexpected shape");
+                }
+                case "List" or "Option" or "Array":
                 {
                     w.GetAppArgs(out Expr[] targs);
                     Repr elem = targs.Length == 1 ? ReprOf(targs[0], tc) : Repr.Erased;
@@ -191,19 +210,21 @@ internal sealed class Compiler
                     {
                         return new Repr(Kind.Unsupported, Why: $"a {c.Name} of {targs.FirstOrDefault()} has no run-time form: {elem.Why ?? "its elements are not data"}");
                     }
-                    Kind k = c.Name.ToString() == "List" ? Kind.List : Kind.Option;
-                    Type generic = k == Kind.List ? _clr.LeanList : _clr.LeanOption;
-                    return new Repr(k, generic.MakeGenericType(elem.ClrType), Elem: elem);
+                    Kind k = c.Name.ToString() switch { "List" => Kind.List, "Option" => Kind.Option, _ => Kind.Array };
+                    Type generic = k switch { Kind.List => _clr.LeanList, Kind.Option => _clr.LeanOption, _ => _clr.LeanArray };
+                    return new Repr(k, GenericInst.Of(generic, elem.ClrType), Elem: elem);
                 }
             }
             if (Resolve(c.Name) is InductiveInfo ind)
             {
-                Layout? l = LayoutFor(ind);
+                w.GetAppArgs(out Expr[] iargs);
+                Expr[] parms = iargs.Take(ind.NumParams).ToArray();
+                Layout? l = LayoutFor(ind, c.Levels, parms, tc);
                 if (l is not null)
                 {
                     return new Repr(l.Kind, l.Builder, l);
                 }
-                return new Repr(Kind.Unsupported, Why: $"the type {c.Name} is not compiled: {_layoutFailures.GetValueOrDefault(c.Name, "unsupported shape")}");
+                return new Repr(Kind.Unsupported, Why: $"the type {c.Name} is not compiled: {_layoutFailures.GetValueOrDefault(LayoutKey(ind, parms), "unsupported shape")}");
             }
         }
         return new Repr(Kind.Unsupported, Why: $"no run-time form for the type {type}");
@@ -225,44 +246,149 @@ internal sealed class Compiler
         }
     }
 
-    /// <summary>The .NET type for an inductive, made the first time it is needed, or null with the reason recorded.</summary>
-    private Layout? LayoutFor(InductiveInfo ind)
+    private static string LayoutKey(InductiveInfo ind, Expr[] parms) =>
+        parms.Length == 0 ? ind.Name.ToString() : ind.Name + "(" + string.Join(", ", parms.Select(p => p.ToString())) + ")";
+
+    /// <summary>The constructor's field telescope at these levels and parameters.</summary>
+    private static Expr CtorFields(ConstructorInfo ctor, InductiveInfo ind, Level[] levels, Expr[] parms, TypeChecker tc)
     {
-        if (_layouts.TryGetValue(ind.Name, out Layout? known))
+        Expr t = ExprOps.InstantiateLevelParams(ctor.Type, ind.LevelParams, levels.Length == ind.LevelParams.Length ? levels : ind.LevelParams.Select(_ => Level.Zero).ToArray());
+        foreach (Expr p in parms)
+        {
+            t = ExprOps.Instantiate1(((PiExpr)tc.Whnf(t)).Body, p);
+        }
+        return t;
+    }
+
+    /// <summary>Whether a field's type is the inductive itself at the same parameters: a recursive field.</summary>
+    private static bool IsSelf(Expr type, InductiveInfo ind, Expr[] parms, TypeChecker tc)
+    {
+        Expr w = tc.Whnf(type);
+        if (w.GetAppFn() is not ConstExpr c || !c.Name.Equals(ind.Name))
+        {
+            return false;
+        }
+        w.GetAppArgs(out Expr[] a);
+        return a.Length == parms.Length && a.Zip(parms).All(x => Expr.Eq(x.First, x.Second));
+    }
+
+    /// <summary>
+    /// Why this type cannot become a .NET type, or null when it can: checked over everything it contains before any
+    /// .NET type is defined, so a type that fails halfway never leaves a half-built class in the assembly.
+    /// </summary>
+    private string? WhyNotLayout(InductiveInfo ind, Level[] levels, Expr[] parms, TypeChecker tc, HashSet<string> visiting)
+    {
+        string key = LayoutKey(ind, parms);
+        if (_layouts.TryGetValue(key, out Layout? known))
+        {
+            return known is null ? _layoutFailures.GetValueOrDefault(key, "unsupported shape") : null;
+        }
+        if (!visiting.Add(key))
+        {
+            return null; // recursion through itself: fine, it is being checked
+        }
+        string? why =
+            !_own.Contains(ind.Name) && ind.Name.ToString() != "Prod" ? "only types declared in the compiled project become .NET types" :
+            ind.NumIndices > 0 ? "it has indices (it is a family of types)" :
+            ind.All.Length > 1 ? "it is mutually inductive" :
+            ind.NumNested > 0 ? "it contains itself inside another type" :
+            parms.Any(p => p.HasFVar) ? "it is used at a type that depends on a local value" : null;
+        if (why is not null)
+        {
+            return why;
+        }
+        Expr sort = ind.Type;
+        foreach (Expr p in parms)
+        {
+            sort = ExprOps.Instantiate1(((PiExpr)tc.Whnf(ExprOps.InstantiateLevelParams(sort, ind.LevelParams, ind.LevelParams.Select(_ => Level.One).ToArray()))).Body, p);
+        }
+        if (tc.Whnf(sort) is SortExpr srt && srt.Level.NormalizesToZero())
+        {
+            return "it is a proposition";
+        }
+        if (ind.Ctors.Length == 0)
+        {
+            return "it has no constructors";
+        }
+        foreach (Name cn in ind.Ctors)
+        {
+            var ctor = (ConstructorInfo)Resolve(cn)!;
+            Expr t = CtorFields(ctor, ind, levels, parms, tc);
+            for (int i = 0; i < ctor.NumFields; i++)
+            {
+                var p = (PiExpr)tc.Whnf(t);
+                if (!IsSelf(p.Domain, ind, parms, tc) && WhyNotField(p.Domain, tc, visiting) is string w)
+                {
+                    return $"field {p.BinderName} of {cn.LastString}: {w}";
+                }
+                t = ExprOps.Instantiate1(p.Body, tc.Lctx.MkLocalDecl(p.BinderName, p.Domain));
+            }
+        }
+        return null;
+    }
+
+    private string? WhyNotField(Expr type, TypeChecker tc, HashSet<string> visiting)
+    {
+        if (tc.IsProp(type))
+        {
+            return null;
+        }
+        Expr w = tc.Whnf(type);
+        if (w is SortExpr)
+        {
+            return null;
+        }
+        if (w is PiExpr)
+        {
+            return EndsInSort(w, tc) ? null : "a function stored in a field is not compiled yet";
+        }
+        if (w.GetAppFn() is not ConstExpr c)
+        {
+            return $"no run-time form for {type}";
+        }
+        w.GetAppArgs(out Expr[] a);
+        switch (c.Name.ToString())
+        {
+            case "Nat" or "Int" or "Bool" or "String" or "Decidable" or "UInt8" or "UInt16" or "UInt32" or "UInt64" or "Int8" or "Int16" or "Int32" or "Int64":
+                return null;
+            case "List" or "Option" or "Array":
+                return a.Length == 1 ? WhyNotField(a[0], tc, visiting) : "unexpected shape";
+            case "Fin":
+                return null;
+            case "Subtype":
+                return a.Length == 2 ? WhyNotField(a[0], tc, visiting) : "unexpected shape";
+        }
+        if (Resolve(c.Name) is InductiveInfo ind)
+        {
+            return WhyNotLayout(ind, c.Levels, a.Take(ind.NumParams).ToArray(), tc, visiting);
+        }
+        return $"no run-time form for {c.Name}";
+    }
+
+    /// <summary>The .NET type for an inductive at these parameters, made the first time it is needed, or null with the reason recorded.</summary>
+    private Layout? LayoutFor(InductiveInfo ind, Level[] levels, Expr[] parms, TypeChecker tc)
+    {
+        string key = LayoutKey(ind, parms);
+        if (_layouts.TryGetValue(key, out Layout? known))
         {
             return known;
         }
-        _layouts[ind.Name] = null; // a structure that contains itself finds this and is refused
-        string? why =
-            !_own.Contains(ind.Name) ? "only types declared in the compiled project become .NET types" :
-            ind.NumParams > 0 ? "it has parameters" :
-            ind.NumIndices > 0 ? "it has indices" :
-            ind.All.Length > 1 ? "it is mutually inductive" :
-            ind.IsRec ? "it is recursive" :
-            ind.LevelParams.Length > 0 ? "it is universe polymorphic" : null;
-        var tc = new TypeChecker(_env);
-        if (why is null && tc.Whnf(ind.Type) is SortExpr s && s.Level.NormalizesToZero())
+        if (WhyNotLayout(ind, levels, parms, new TypeChecker(_env, tc.Lctx), new HashSet<string>()) is string why)
         {
-            why = "it is a proposition";
-        }
-        var ctors = ind.Ctors.Select(n => (ConstructorInfo)Resolve(n)!).ToArray();
-        if (why is null && ctors.Length == 0)
-        {
-            why = "it has no constructors";
-        }
-        if (why is not null)
-        {
-            _layoutFailures[ind.Name] = why;
+            _layoutFailures[key] = why;
+            _layouts[key] = null;
             return null;
         }
-        string clrName = ClrTypeName(ind.Name);
-        if (ctors.All(c => c.NumFields == 0))
+        string clrName = ClrTypeName(ind.Name) + (parms.Length > 0 ? "Of" + string.Concat(parms.Select(TypeArgName)) : "");
+        var ctors = ind.Ctors.Select(n => (ConstructorInfo)Resolve(n)!).ToArray();
+        Expr leanType = Expr.MkApp(Expr.Const(ind.Name, levels), parms);
+        if (parms.Length == 0 && ctors.All(c => c.NumFields == 0))
         {
             // Built by hand rather than with DefineEnum, whose base type is the running process's System.Enum and would
             // leave the assembly referring to System.Private.CoreLib.
             TypeBuilder eb = _module.DefineType(clrName, TypeAttributes.Public | TypeAttributes.Sealed, _clr.Enum);
             eb.DefineField("value__", _clr.Int32, FieldAttributes.Public | FieldAttributes.SpecialName | FieldAttributes.RTSpecialName);
-            var layout = new Layout { Name = ind.Name, Info = ind, Kind = Kind.Enum, Builder = eb, ClrName = clrName };
+            var layout = new Layout { Name = ind.Name, Info = ind, Kind = Kind.Enum, Builder = eb, ClrName = clrName, LeanType = leanType };
             for (int i = 0; i < ctors.Length; i++)
             {
                 string cn = Pascal(ctors[i].Name.LastString!);
@@ -270,34 +396,95 @@ internal sealed class Compiler
                 lit.SetConstant(i);
                 layout.Cases.Add((ctors[i].Name, cn, lit));
             }
-            _layouts[ind.Name] = layout;
+            _layouts[key] = layout;
             _structs.Add(eb);
             return layout;
         }
-        if (ctors.Length != 1)
+        if (ctors.Length == 1)
         {
-            _layoutFailures[ind.Name] = "it has more than one constructor and some take arguments";
-            return null;
+            ConstructorInfo ctor = ctors[0];
+            TypeBuilder tb = _module.DefineType(clrName, TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class, _clr.Object);
+            var st = new Layout { Name = ind.Name, Info = ind, Kind = Kind.Struct, Builder = tb, ClrName = clrName, Params = parms, Levels = levels, LeanType = leanType };
+            _layouts[key] = st;   // before the fields, so a field of this very type finds it
+            _structs.Add(tb);
+            var (fields, self) = DefineFields(tb, ctor, ind, levels, parms, tc);
+            st.Fields.AddRange(fields);
+            st.SelfFields = self;
+            st.Ctor = DefineCtor(tb, st.RuntimeFields, _clr.Object.GetConstructor(Type.EmptyTypes)!, null);
+            return st;
         }
-        ConstructorInfo ctor = ctors[0];
-        TypeBuilder tb = _module.DefineType(clrName, TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class, _clr.Object);
-        var st = new Layout { Name = ind.Name, Info = ind, Kind = Kind.Struct, Builder = tb, ClrName = clrName };
-        Expr t = ctor.Type;
+        // A union: an abstract class with a Tag, and a sealed nested class per constructor.
+        TypeBuilder baseType = _module.DefineType(clrName, TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Class, _clr.Object);
+        var un = new Layout { Name = ind.Name, Info = ind, Kind = Kind.Union, Builder = baseType, ClrName = clrName, Params = parms, Levels = levels, LeanType = leanType };
+        _layouts[key] = un;
+        _structs.Add(baseType);
+        un.TagField = baseType.DefineField("Tag", _clr.Int32, FieldAttributes.Public | FieldAttributes.InitOnly);
+        ConstructorBuilder baseCtor = baseType.DefineConstructor(MethodAttributes.Family, CallingConventions.Standard, [_clr.Int32]);
+        {
+            ILGenerator il = baseCtor.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, _clr.Object.GetConstructor(Type.EmptyTypes)!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Stfld, un.TagField);
+            il.Emit(OpCodes.Ret);
+        }
+        for (int i = 0; i < ctors.Length; i++)
+        {
+            string cn = Pascal(ctors[i].Name.LastString!);
+            TypeBuilder nt = baseType.DefineNestedType(cn, TypeAttributes.NestedPublic | TypeAttributes.Sealed | TypeAttributes.Class, baseType);
+            _nested.Add(nt);
+            var (fields, self) = DefineFields(nt, ctors[i], ind, levels, parms, tc);
+            ConstructorBuilder cb = DefineCtor(nt, fields.Where(f => f.Field is not null).ToArray(), baseCtor, i);
+            un.Variants.Add(new Variant(ctors[i].Name, cn, nt, fields, cb, self));
+        }
+        return un;
+    }
+
+    private readonly List<TypeBuilder> _nested = new();
+
+    /// <summary>Short text for a type argument in a class name: <c>Int</c>, <c>ListInt</c>.</summary>
+    private static string TypeArgName(Expr e) => e switch
+    {
+        ConstExpr c => Pascal(c.Name.LastString ?? "T"),
+        AppExpr => string.Concat(new[] { e.GetAppFn() }.Concat(e.GetAppNumArgs() > 0 ? GetArgs(e) : []).Select(TypeArgName)),
+        _ => "T",
+    };
+
+    private static Expr[] GetArgs(Expr e)
+    {
+        e.GetAppArgs(out Expr[] a);
+        return a;
+    }
+
+    private (List<FieldSlot> Fields, int Self) DefineFields(TypeBuilder tb, ConstructorInfo ctor, InductiveInfo ind, Level[] levels, Expr[] parms, TypeChecker tc0)
+    {
+        var tc = new TypeChecker(_env, tc0.Lctx);
+        var fields = new List<FieldSlot>();
+        int self = 0;
+        Expr t = CtorFields(ctor, ind, levels, parms, tc);
         for (int i = 0; i < ctor.NumFields; i++)
         {
             var p = (PiExpr)tc.Whnf(t);
             Repr r = ReprOf(p.Domain, tc);
-            if (r.Kind == Kind.Unsupported)
+            if (IsSelf(p.Domain, ind, parms, tc))
             {
-                _layoutFailures[ind.Name] = $"field {p.BinderName}: {r.Why}";
-                return null;
+                self++;
             }
             string fn = Pascal(p.BinderName.LastString ?? $"field{i}");
-            FieldBuilder? fb = r.Kind == Kind.Erased ? null : tb.DefineField(fn, r.ClrType, FieldAttributes.Public | FieldAttributes.InitOnly);
-            st.Fields.Add(new FieldSlot(Name.Parse(ind.Name + "." + p.BinderName), fn, r, fb));
+            if (fn.Length == 0 || fn == "Tag")
+            {
+                fn = "Field" + i;
+            }
+            FieldBuilder? fb = r.IsData ? tb.DefineField(fn, r.ClrType, FieldAttributes.Public | FieldAttributes.InitOnly) : null;
+            fields.Add(new FieldSlot(Name.Parse(ind.Name + "." + p.BinderName), fn, r.IsData ? r : Repr.Erased, fb));
             t = ExprOps.Instantiate1(p.Body, tc.Lctx.MkLocalDecl(p.BinderName, p.Domain));
         }
-        FieldSlot[] rt = st.RuntimeFields;
+        return (fields, self);
+    }
+
+    private ConstructorBuilder DefineCtor(TypeBuilder tb, FieldSlot[] rt, System.Reflection.ConstructorInfo baseCtor, int? tag)
+    {
         ConstructorBuilder cb = tb.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, rt.Select(f => f.Repr.ClrType).ToArray());
         for (int i = 0; i < rt.Length; i++)
         {
@@ -305,7 +492,11 @@ internal sealed class Compiler
         }
         ILGenerator il = cb.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, _clr.Object.GetConstructor(Type.EmptyTypes)!);
+        if (tag is int k)
+        {
+            il.Emit(OpCodes.Ldc_I4, k);
+        }
+        il.Emit(OpCodes.Call, baseCtor);
         for (int i = 0; i < rt.Length; i++)
         {
             il.Emit(OpCodes.Ldarg_0);
@@ -313,10 +504,7 @@ internal sealed class Compiler
             il.Emit(OpCodes.Stfld, rt[i].Field!);
         }
         il.Emit(OpCodes.Ret);
-        st.Ctor = cb;
-        _layouts[ind.Name] = st;
-        _structs.Add(tb);
-        return st;
+        return cb;
     }
 
     private readonly List<TypeBuilder> _structs = new();
@@ -325,13 +513,13 @@ internal sealed class Compiler
     internal Body NewReducer() => new(this, null);
 
     /// <summary>The layout already made for an inductive, if it became a .NET type.</summary>
-    internal Layout? LayoutOf(Name n) => _layouts.GetValueOrDefault(n);
+    internal Layout? LayoutOf(Name n) => _layouts.GetValueOrDefault(n.ToString());
 
     /// <summary>Lean marks every recursive definition by also emitting <c>f._unsafe_rec</c>, the version its own compiler runs.</summary>
     internal bool IsRecursive(Name n) => Resolve(Name.Parse(n + "._unsafe_rec")) is not null;
 
     /// <summary>The recursive definitions an export reaches, whose equation lemmas the build has to ask Lean for.</summary>
-    public HashSet<Name> RecursiveReachableFrom(IEnumerable<Name> roots)
+    public HashSet<Name> RecursiveReachableFrom(IEnumerable<Name> roots, HashSet<Name> replaced)
     {
         var found = new HashSet<Name>();
         var seen = new HashSet<Name>();
@@ -339,11 +527,20 @@ internal sealed class Compiler
         while (stack.Count > 0)
         {
             Name n = stack.Pop();
-            if (!seen.Add(n) || _prims.ContainsKey(n))
+            if (!seen.Add(n) || _prims.ContainsKey(n) || Body.ArrayOps.Contains(n.ToString()))
             {
                 continue;
             }
             string sn = n.ToString();
+            if (Equations.Replacements.TryGetValue(sn, out Equations.Replacement? rep))
+            {
+                replaced.Add(n);
+                foreach (string u in rep.Uses)
+                {
+                    stack.Push(Name.Parse(u));
+                }
+                continue;
+            }
             if (sn.EndsWith("._unsafe_rec", StringComparison.Ordinal) || sn.EndsWith("._sunfold", StringComparison.Ordinal)
                 || sn.EndsWith(".brecOn", StringComparison.Ordinal) || sn.EndsWith(".below", StringComparison.Ordinal))
             {
@@ -370,16 +567,13 @@ internal sealed class Compiler
     }
 
     /// <summary>
-    /// The method for a recursive helper at these arguments, declared the first time it is needed. Data arguments
-    /// are parameters; type and instance arguments are fixed into the copy, so they must not mention local
-    /// variables; proofs are erased.
+    /// The method for a recursive helper at these arguments, declared the first time it is needed, and the local
+    /// variables the call has to pass along. Data arguments are parameters; proofs are erased; type, instance and
+    /// function arguments are fixed into the copy, closed over any local variables they use, which become extra
+    /// parameters.
     /// </summary>
-    internal Export Helper(ConstExpr c, Expr[] args)
+    internal (Export Fn, Expr[] Captured) Helper(ConstExpr c, Expr[] args, TypeChecker caller)
     {
-        if (System.Environment.GetEnvironmentVariable("LEAN2IL_TRACE") is not null)
-        {
-            Console.Error.WriteLine($"trace: helper {c.Name} (equation: {_equations.ContainsKey(c.Name)}, recursive: {IsRecursive(c.Name)})");
-        }
         if (Resolve(c.Name) is not DefinitionInfo def)
         {
             throw new CompileError($"internal: {c.Name} is not a definition");
@@ -388,41 +582,79 @@ internal sealed class Compiler
         {
             throw new CompileError($"{c.Name} is recursive and Lean gave no equation lemma for it, so it cannot be compiled");
         }
-        var tc = new TypeChecker(_env);
-        var ps = new List<Param>();
-        var fixedArgs = new Expr?[args.Length];
-        Expr t = def.InstantiateTypeLevelParams(c.Levels);
+
+        // Which arguments are fixed into the copy, and which local variables they use.
+        var tc = new TypeChecker(_env, new LocalContext());
+        var kinds = new Repr[args.Length];
+        var isProof = new bool[args.Length];
+        {
+            var probe = new TypeChecker(_env, caller.Lctx);
+            Expr pt = def.InstantiateTypeLevelParams(c.Levels);
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (probe.Whnf(pt) is not PiExpr p)
+                {
+                    throw new CompileError($"{c.Name} is applied to more arguments than it takes");
+                }
+                kinds[i] = ReprOf(p.Domain, probe);
+                isProof[i] = !kinds[i].IsData && probe.IsProp(p.Domain);
+                pt = ExprOps.Instantiate1(p.Body, args[i]);
+            }
+        }
+        var captured = new List<Expr>();
         for (int i = 0; i < args.Length; i++)
         {
-            if (tc.Whnf(t) is not PiExpr p)
+            if (kinds[i].IsData || isProof[i] || !args[i].HasFVar)
             {
-                throw new CompileError($"{c.Name} is applied to more arguments than it takes");
+                continue;
             }
-            Repr r = ReprOf(p.Domain, tc);
-            Expr bound;
-            if (r.IsData)
+            ExprOps.ForEach(args[i], (x, _) =>
             {
-                bound = tc.Lctx.MkLocalDecl(p.BinderName, p.Domain, p.Info);
-            }
-            else if (tc.IsProp(p.Domain))
-            {
-                bound = tc.Lctx.MkLocalDecl(p.BinderName, p.Domain, p.Info);
-            }
-            else
-            {
-                // A type, an instance, or a function argument: the copy is specialized to it, as a C++ template would
-                // be. So List.foldr (· + ·) 0 compiles, with the addition inlined; a lambda that captures a local
-                // variable does not, yet.
-                if (args[i].HasFVar)
+                if (x is FVarExpr f && !captured.Any(y => ((FVarExpr)y).Id.Equals(f.Id)))
                 {
-                    throw new CompileError(r.Kind == Kind.Unsupported && r.Why?.StartsWith("a function value", StringComparison.Ordinal) == true
-                        ? $"{c.Name} is passed a function that uses local variables; lean2il compiles function arguments only when they are closed (use no local variables)"
-                        : $"{c.Name} is used at a type or instance that depends on a local value, which is not compiled yet");
+                    captured.Add(f);
                 }
-                fixedArgs[i] = args[i];
-                bound = args[i];
+                return x.HasFVar;
+            });
+        }
+        // Mirror the captured variables in a fresh context, in order, and close each fixed argument over them.
+        var mirrorCtx = new LocalContext();
+        var mirror = new List<Expr>();
+        var captures = new List<(Name, Expr, Repr)>();
+        Expr Remap(Expr e) => ExprOps.Replace(e, (x, _) => x is FVarExpr f && captured.FindIndex(y => ((FVarExpr)y).Id.Equals(f.Id)) is int k && k >= 0 ? mirror[k] : null);
+        var mtc = new TypeChecker(_env, mirrorCtx);
+        foreach (Expr f in captured)
+        {
+            LocalDecl d = caller.Lctx.Get(f);
+            Expr type = Remap(d.Type);
+            Repr r = ReprOf(type, mtc);
+            if (!r.IsData && !mtc.IsProp(type))
+            {
+                throw new CompileError($"{c.Name} is passed a function that uses the local {(r.Kind == Kind.Erased ? "type" : "function")} {d.UserName}, which is not compiled yet");
             }
-            ps.Add(new Param(p.BinderName, p.BinderName.LastString ?? "arg", r.IsData ? r : Repr.Erased));
+            mirror.Add(mirrorCtx.MkLocalDecl(d.UserName, type));
+            captures.Add((d.UserName, type, r.IsData ? r : Repr.Erased));
+        }
+        var fixedArgs = new Expr?[args.Length];
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (!kinds[i].IsData && !isProof[i])
+            {
+                fixedArgs[i] = mirror.Count == 0 ? args[i] : mirrorCtx.MkLambda(mirror, Remap(args[i]));
+            }
+        }
+
+        // The signature of the copy.
+        var ps = new List<Param>();
+        Expr t = def.InstantiateTypeLevelParams(c.Levels);
+        var capFvars = captures.Select(cp => tc.Lctx.MkLocalDecl(cp.Item1, cp.Item2)).ToList();
+        for (int i = 0; i < args.Length; i++)
+        {
+            var p = (PiExpr)tc.Whnf(t);
+            Expr bound = fixedArgs[i] is Expr fx
+                ? (captures.Count == 0 ? fx : Expr.MkApp(fx, capFvars))
+                : tc.Lctx.MkLocalDecl(p.BinderName, p.Domain, p.Info);
+            ps.Add(new Param(p.BinderName, p.BinderName.LastString ?? "arg", kinds[i].IsData ? ReprOf(p.Domain, tc) : Repr.Erased));
             t = ExprOps.Instantiate1(p.Body, bound);
         }
         if (tc.Whnf(t) is PiExpr)
@@ -434,23 +666,23 @@ internal sealed class Compiler
         {
             throw new CompileError($"{c.Name}: {result.Why ?? "its result is not data"}");
         }
-        string key = c.Name + "|" + string.Join(",", c.Levels.Select(l => l.ToString())) + "|" + string.Join(",", fixedArgs.Select(a => a?.ToString() ?? "_"));
-        if (_functions.TryGetValue(key, out Export? known))
+        string key = c.Name + "|" + string.Join(",", c.Levels.Select(l => l.ToString())) + "|" + string.Join(",", fixedArgs.Select(a => a?.ToString() ?? "_"))
+            + "|" + string.Join(",", captures.Select(cp => cp.Item2.ToString()));
+        if (!_functions.TryGetValue(key, out Export? e))
         {
-            return known;
+            var runtime = ps.Where(p => p.Repr.IsData).Select(p => p.Repr.ClrType).Concat(captures.Where(cp => cp.Item3.IsData).Select(cp => cp.Item3.ClrType)).ToArray();
+            string clrName = "Rec" + string.Concat(c.Name.ToString().Split('.').Select(Pascal)) + (_functions.Count(kv => kv.Value.Name.Equals(c.Name)) is int k && k > 0 ? "_" + k : "");
+            MethodBuilder mb = _class.DefineMethod(clrName, MethodAttributes.Assembly | MethodAttributes.Static, result.ClrType, runtime);
+            e = new Export
+            {
+                Name = c.Name, Info = def, ClrName = clrName, Params = ps, Result = result, Raw = mb,
+                IsPublic = false, Levels = c.Levels, Fixed = fixedArgs, Captures = captures,
+                Equation = ExprOps.InstantiateLevelParams(equation, def.LevelParams, c.Levels),
+            };
+            _functions[key] = e;
+            _pending.Enqueue(e);
         }
-        var runtime = ps.Where(p => p.Repr.IsData).ToArray();
-        string clrName = "Rec" + string.Concat(c.Name.ToString().Split('.').Select(Pascal)) + (_functions.Count(kv => kv.Value.Name.Equals(c.Name)) is int k && k > 0 ? "_" + k : "");
-        MethodBuilder mb = _class.DefineMethod(clrName, MethodAttributes.Assembly | MethodAttributes.Static,
-            result.ClrType, runtime.Select(p => p.Repr.ClrType).ToArray());
-        var e = new Export
-        {
-            Name = c.Name, Info = def, ClrName = clrName, Params = ps, Result = result, Raw = mb,
-            IsPublic = false, Levels = c.Levels, Fixed = fixedArgs, Equation = ExprOps.InstantiateLevelParams(equation, def.LevelParams, c.Levels),
-        };
-        _functions[key] = e;
-        _pending.Enqueue(e);
-        return e;
+        return (e, captured.ToArray());
     }
 
     private static bool IsInstanceLike(Expr type, TypeChecker tc) => tc.Whnf(type) is not PiExpr;
@@ -521,6 +753,7 @@ internal sealed class Compiler
     public void CompileBody(Export e)
     {
         var body = new Body(this, e.Target.GetILGenerator()) { Self = e };
+        var capFvars = new List<Expr>();
         if (e.Equation is not null)
         {
             // A recursive function: make sure a few more frames fit before taking one (see LeanStack).
@@ -528,13 +761,19 @@ internal sealed class Compiler
         }
         var tc = body.Tc;
         Expr t = e.Info.InstantiateTypeLevelParams(e.Levels);
+        foreach (var (cn, ct, _) in e.Captures)
+        {
+            capFvars.Add(tc.Lctx.MkLocalDecl(cn, ct));
+        }
         var fvars = new List<Expr>();
         int arg = 0;
         for (int i = 0; i < e.Params.Count; i++)
         {
             Param p = e.Params[i];
             var pi = (PiExpr)tc.Whnf(t);
-            Expr bound = e.Fixed?[i] ?? tc.Lctx.MkLocalDecl(pi.BinderName, pi.Domain, pi.Info);
+            Expr bound = e.Fixed?[i] is Expr fx
+                ? (capFvars.Count == 0 ? fx : Expr.MkApp(fx, capFvars))
+                : tc.Lctx.MkLocalDecl(pi.BinderName, pi.Domain, pi.Info);
             fvars.Add(bound);
             t = ExprOps.Instantiate1(pi.Body, bound);
             if (e.Fixed?[i] is not null)
@@ -549,6 +788,17 @@ internal sealed class Compiler
             else
             {
                 body.Bind(bound, Slot.Erased.Instance);
+            }
+        }
+        for (int i = 0; i < e.Captures.Count; i++)
+        {
+            if (e.Captures[i].Repr.IsData)
+            {
+                body.Bind(capFvars[i], new Slot.Arg(arg++, e.Captures[i].Repr));
+            }
+            else
+            {
+                body.Bind(capFvars[i], Slot.Erased.Instance);
             }
         }
         Expr app = e.Equation is Expr eq ? EquationRhs(eq, fvars, e.Name) : Expr.MkApp(e.Info.InstantiateValueLevelParams(e.Levels), fvars);
@@ -731,6 +981,10 @@ internal sealed class Compiler
         {
             tb.CreateType();
         }
+        foreach (TypeBuilder tb in _nested)
+        {
+            tb.CreateType();
+        }
         _class.CreateType();
         info.CreateType();
     }
@@ -789,7 +1043,8 @@ internal sealed class Compiler
         /// <summary>Check a value's form against the form expected, and fail loudly on a mismatch.</summary>
         public void Coerce(Repr have, Repr want)
         {
-            bool same = have.Kind == want.Kind && (have.Kind is not (Kind.Enum or Kind.Struct) || have.Layout == want.Layout);
+            bool same = have.Kind == want.Kind && (have.Kind is not (Kind.Enum or Kind.Struct) || have.Layout == want.Layout)
+                && (have.Kind is not Kind.Fixed || have.Clr == want.Clr);
             bool bothBig = have.Kind is Kind.Nat or Kind.Int && want.Kind is Kind.Nat or Kind.Int;
             if (!same && !bothBig)
             {
@@ -910,9 +1165,14 @@ internal sealed class Compiler
                     }
                     return ReferenceEquals(s, p.Struct) ? e : Expr.MkApp(Expr.Proj(p.StructName, p.Idx, s), args);
                 }
-                if (head is not ConstExpr c || _c._prims.ContainsKey(c.Name) || _c._exports.ContainsKey(c.Name) || _c.IsRecursive(c.Name))
+                if (head is not ConstExpr c || _c._prims.ContainsKey(c.Name) || ArrayOps.Contains(c.Name.ToString()) || _c._exports.ContainsKey(c.Name) || _c.IsRecursive(c.Name))
                 {
                     return e;
+                }
+                if (_c._replacements.TryGetValue(c.Name, out var rep))
+                {
+                    e = Expr.MkApp(ExprOps.InstantiateLevelParams(rep.Rhs, rep.Levels, c.Levels), args);
+                    continue;
                 }
                 ConstantInfo? info = _c.Resolve(c.Name);
                 if (info is DefinitionInfo d)
@@ -982,12 +1242,23 @@ internal sealed class Compiler
             {
                 throw new CompileError($"cannot compile {e}");
             }
+            if (ArrayOps.Contains(c.Name.ToString()))
+            {
+                return EmitArrayOp(c, args);
+            }
             if (_c._prims.TryGetValue(c.Name, out Primitive? prim))
             {
                 int arity = prim.Args.Max() + 1;
                 if (args.Length != arity)
                 {
                     throw new CompileError($"{c.Name} applied to {args.Length} arguments, expected {arity}");
+                }
+                if (prim.Result == Kind.Fixed && c.Name.ToString().EndsWith(".ofNat", StringComparison.Ordinal)
+                    && Reduce(args[0]) is LitExpr { Value: NatLiteral lit })
+                {
+                    // A numeral: wrap it now, as ofNat would, and load the constant.
+                    PushFixed(FixedWidth.OfClr(prim.ResultClr!), lit.Value);
+                    return new Repr(Kind.Fixed, prim.ResultClr);
                 }
                 foreach (int i in prim.Args)
                 {
@@ -998,6 +1269,7 @@ internal sealed class Compiler
                 {
                     Kind.Bool => new Repr(Kind.Bool, _c._clr.Bool),
                     Kind.String => new Repr(Kind.String, _c._clr.String),
+                    Kind.Fixed => new Repr(Kind.Fixed, prim.ResultClr),
                     _ => new Repr(prim.Result, _c._clr.BigInteger),
                 };
             }
@@ -1007,7 +1279,8 @@ internal sealed class Compiler
             }
             if (_c.IsRecursive(c.Name))
             {
-                return EmitCall(_c.Helper(c, args), args, tail);
+                var (fn, captured) = _c.Helper(c, args, Tc);
+                return EmitCall(fn, args, tail, captured);
             }
             return _c.Resolve(c.Name) switch
             {
@@ -1057,6 +1330,19 @@ internal sealed class Compiler
             }
         }
 
+        private void PushFixed(FixedWidth f, BigInteger n)
+        {
+            BigInteger low = f.Wrap(n);
+            if (f.Bits == 64)
+            {
+                Il.Emit(OpCodes.Ldc_I8, f.Signed ? (long)low : unchecked((long)(ulong)low));
+            }
+            else
+            {
+                Il.Emit(OpCodes.Ldc_I4, f.Signed ? (int)low : unchecked((int)(uint)low));
+            }
+        }
+
         private Repr EmitLet(LetExpr l, bool tail)
         {
             Repr r = _c.ReprOf(l.Type, Tc);
@@ -1075,8 +1361,19 @@ internal sealed class Compiler
 
         private Repr EmitProj(ProjExpr p)
         {
-            var ind = _c.Resolve(p.StructName) as InductiveInfo ?? throw new CompileError($"unknown structure {p.StructName}");
-            Layout l = _c.LayoutFor(ind) ?? throw new CompileError($"the structure {p.StructName} is not compiled: {_c._layoutFailures.GetValueOrDefault(p.StructName)}");
+            if (p.StructName.ToString() is "Fin" or "Subtype" && p.Idx == 0)
+            {
+                return Emit(p.Struct);
+            }
+            if (p.StructName.ToString() == "Array")
+            {
+                Repr list = _c.ReprOf(Tc.Infer(p), Tc);
+                Emit(p.Struct);
+                Il.Emit(OpCodes.Callvirt, _c._clr.ILeanArray.GetMethod("ToList")!);
+                Il.Emit(OpCodes.Castclass, list.ClrType);
+                return list;
+            }
+            Layout l = LayoutOfValue(p.Struct, $"the structure {p.StructName}");
             FieldSlot f = l.Fields[p.Idx];
             if (f.Field is null)
             {
@@ -1087,7 +1384,7 @@ internal sealed class Compiler
             return f.Repr;
         }
 
-        private Repr EmitCall(Export ex, Expr[] args, bool tail)
+        private Repr EmitCall(Export ex, Expr[] args, bool tail, Expr[]? captured = null)
         {
             if (args.Length != ex.Params.Count)
             {
@@ -1099,6 +1396,14 @@ internal sealed class Compiler
                 if (ex.Params[i].Repr.IsData)
                 {
                     Coerce(Emit(args[i]), ex.Params[i].Repr);
+                    n++;
+                }
+            }
+            for (int i = 0; i < (captured?.Length ?? 0); i++)
+            {
+                if (ex.Captures[i].Repr.IsData)
+                {
+                    Coerce(Emit(captured![i]), ex.Captures[i].Repr);
                     n++;
                 }
             }
@@ -1170,12 +1475,42 @@ internal sealed class Compiler
                     return r;
                 }
             }
-            var ind = (InductiveInfo)_c.Resolve(ci.Induct)!;
-            Layout l = _c.LayoutFor(ind) ?? throw new CompileError($"the type {ci.Induct} is not compiled: {_c._layoutFailures.GetValueOrDefault(ci.Induct)}");
+            if (ci.Name.ToString() is "Fin.mk" or "Subtype.mk")
+            {
+                return Emit(args[ci.NumParams]);
+            }
+            if (ci.Name.ToString() == "Array.mk")
+            {
+                Repr ar = _c.ReprOf(Tc.Infer(whole), Tc);
+                if (!ar.IsData)
+                {
+                    throw new CompileError(ar.Why ?? $"no run-time form for {whole}");
+                }
+                Emit(args[1]);
+                Il.Emit(OpCodes.Ldtoken, ar.ClrType);
+                Il.Emit(OpCodes.Call, _c._clr.Static(_c._clr.LeanOps, "ArrayOf", _c._clr.ILeanList, _c._clr.RuntimeTypeHandle));
+                Il.Emit(OpCodes.Castclass, ar.ClrType);
+                return ar;
+            }
+            Layout l = LayoutOfValue(whole, $"the type {ci.Induct}");
             if (l.Kind == Kind.Enum)
             {
                 Il.Emit(OpCodes.Ldc_I4, ci.Cidx);
                 return new Repr(Kind.Enum, l.Builder, l);
+            }
+            if (l.Kind == Kind.Union)
+            {
+                Variant v = l.Variants[ci.Cidx];
+                for (int i = 0; i < ci.NumFields; i++)
+                {
+                    FieldSlot f = v.Fields[i];
+                    if (f.Field is not null)
+                    {
+                        Coerce(Emit(args[ci.NumParams + i]), f.Repr);
+                    }
+                }
+                Il.Emit(OpCodes.Newobj, v.Constructor);
+                return new Repr(Kind.Union, l.Builder, l);
             }
             for (int i = 0; i < ci.NumFields; i++)
             {
@@ -1246,6 +1581,23 @@ internal sealed class Compiler
                                 new Slot.Unavailable("this uses the recursor's induction hypothesis directly; write the recursion as a recursive definition instead")], extra, tail: tail);
                         });
                 }
+                case "Fin":
+                case "Subtype":
+                {
+                    Repr val = _c.ReprOf(Tc.Infer(Expr.Proj(indName, 0, major)), Tc);
+                    LocalBuilder v = Spill(major, val.ClrType);
+                    return EmitMinor(minors[0], [new Slot.Local(v, val)], extra, erasedFields: 2, tail: tail);
+                }
+                case "Array":
+                {
+                    Repr list = _c.ReprOf(Tc.Infer(Expr.Proj(Name.Parse("Array"), 0, major)), Tc);
+                    Emit(major);
+                    Il.Emit(OpCodes.Callvirt, _c._clr.ILeanArray.GetMethod("ToList")!);
+                    Il.Emit(OpCodes.Castclass, list.ClrType);
+                    LocalBuilder items = Il.DeclareLocal(list.ClrType);
+                    Il.Emit(OpCodes.Stloc, items);
+                    return EmitMinor(minors[0], [new Slot.Local(items, list)], extra, tail: tail);
+                }
                 case "List":
                 case "Option":
                 {
@@ -1304,7 +1656,42 @@ internal sealed class Compiler
                         () => EmitMinor(minors[0], [new Slot.Local(m, new Repr(Kind.Nat, _c._clr.BigInteger))], extra, tail: tail));
                 }
             }
-            Layout l = _c.LayoutFor(ind) ?? throw new CompileError($"matching on {indName} is not compiled: {_c._layoutFailures.GetValueOrDefault(indName)}");
+            Layout l = LayoutOfValue(major, $"matching on {indName}");
+            if (l.Kind == Kind.Union)
+            {
+                // Read the tag, then take the value apart as the constructor's class.
+                LocalBuilder u = Spill(major, l.Builder);
+                Il.Emit(OpCodes.Ldloc, u);
+                Il.Emit(OpCodes.Ldfld, l.TagField!);
+                Label[] cases = l.Variants.Select(_ => Il.DefineLabel()).ToArray();
+                Label done = Il.DefineLabel();
+                Il.Emit(OpCodes.Switch, cases);
+                Throw("System.ArgumentException", $"not a {l.ClrName}");
+                Repr? res = null;
+                for (int i = 0; i < cases.Length; i++)
+                {
+                    Il.MarkLabel(cases[i]);
+                    Variant v = l.Variants[i];
+                    Il.Emit(OpCodes.Ldloc, u);
+                    Il.Emit(OpCodes.Castclass, v.Type);
+                    LocalBuilder cell = Il.DeclareLocal(v.Type);
+                    Il.Emit(OpCodes.Stloc, cell);
+                    var fslots = FieldSlots(cell, v.Fields);
+                    for (int k = 0; k < v.SelfFields; k++)
+                    {
+                        fslots.Add(new Slot.Unavailable("this uses the recursor's induction hypothesis directly; write the recursion as a recursive definition instead"));
+                    }
+                    Repr r = EmitMinor(minors[i], fslots, extra, tail: tail);
+                    if (res is not null)
+                    {
+                        Coerce(r, res);
+                    }
+                    res ??= r;
+                    Il.Emit(OpCodes.Br, done);
+                }
+                Il.MarkLabel(done);
+                return res!;
+            }
             if (l.Kind == Kind.Enum)
             {
                 Emit(major);
@@ -1329,8 +1716,18 @@ internal sealed class Compiler
             }
             // A structure: take it apart once, and bind each field the branch uses.
             LocalBuilder obj = Spill(major, l.Builder);
+            var slots = FieldSlots(obj, l.Fields);
+            for (int k = 0; k < l.SelfFields; k++)
+            {
+                slots.Add(new Slot.Unavailable("this uses the recursor's induction hypothesis directly; write the recursion as a recursive definition instead"));
+            }
+            return EmitMinor(minors[0], slots, extra, tail: tail);
+        }
+
+        private List<Slot> FieldSlots(LocalBuilder obj, List<FieldSlot> fields)
+        {
             var slots = new List<Slot>();
-            foreach (FieldSlot f in l.Fields)
+            foreach (FieldSlot f in fields)
             {
                 if (f.Field is null)
                 {
@@ -1343,7 +1740,14 @@ internal sealed class Compiler
                 Il.Emit(OpCodes.Stloc, lb);
                 slots.Add(new Slot.Local(lb, f.Repr));
             }
-            return EmitMinor(minors[0], slots, extra, tail: tail);
+            return slots;
+        }
+
+        /// <summary>The layout of the type of <paramref name="value"/>, or an error naming what could not be compiled.</summary>
+        private Layout LayoutOfValue(Expr value, string what)
+        {
+            Repr r = _c.ReprOf(Tc.Infer(value), Tc);
+            return r.Layout ?? throw new CompileError($"{what} is not compiled: {r.Why ?? "it has no run-time form"}");
         }
 
         private void Throw(string exceptionType, string message)
@@ -1352,6 +1756,84 @@ internal sealed class Compiler
             Il.Emit(OpCodes.Ldstr, message);
             Il.Emit(OpCodes.Newobj, t.GetConstructor([_c._clr.String])!);
             Il.Emit(OpCodes.Throw);
+        }
+
+        /// <summary>
+        /// The <c>Array</c> operations Lean's runtime implements natively and the kernel defines through
+        /// <c>toList</c>: compiled to the array's own constant-time operations instead of a walk down a list.
+        /// </summary>
+        internal static readonly HashSet<string> ArrayOps =
+            ["Array.size", "Array.getInternal", "Array.get!Internal", "Array.push", "Array.set", "Array.setIfInBounds"];
+
+        private Repr EmitArrayOp(ConstExpr c, Expr[] args)
+        {
+            string op = c.Name.ToString();
+            int arrayArg = op == "Array.get!Internal" ? 2 : 1;
+            int arity = op switch { "Array.size" => 2, "Array.push" or "Array.setIfInBounds" => op == "Array.push" ? 3 : 4, "Array.set" => 5, _ => 4 };
+            if (args.Length != arity)
+            {
+                throw new CompileError($"{op} is applied to {args.Length} arguments; partial application is not compiled yet");
+            }
+            Repr ar = _c.ReprOf(Tc.Infer(args[arrayArg]), Tc);
+            if (!ar.IsData)
+            {
+                throw new CompileError(ar.Why ?? $"no run-time form for {args[arrayArg]}");
+            }
+            Repr el = ar.Elem!;
+            Type ia = _c._clr.ILeanArray;
+            var nat = new Repr(Kind.Nat, _c._clr.BigInteger);
+            Coerce(Emit(args[arrayArg]), ar);
+            switch (op)
+            {
+                case "Array.size":
+                    Il.Emit(OpCodes.Callvirt, _c._clr.Getter(ia, "Size"));
+                    return nat;
+                case "Array.getInternal":
+                    Coerce(Emit(args[2]), nat);
+                    Il.Emit(OpCodes.Callvirt, ia.GetMethod("Get")!);
+                    Il.Emit(OpCodes.Unbox_Any, el.ClrType);
+                    return el;
+                case "Array.get!Internal":
+                {
+                    // a[i]! is a[i] in range and the type's default value out of it, as Lean's getD makes it.
+                    LocalBuilder a = Il.DeclareLocal(ar.ClrType);
+                    Il.Emit(OpCodes.Stloc, a);
+                    Coerce(Emit(args[3]), nat);
+                    LocalBuilder i = Il.DeclareLocal(_c._clr.BigInteger);
+                    Il.Emit(OpCodes.Stloc, i);
+                    Il.Emit(OpCodes.Ldloc, a);
+                    Il.Emit(OpCodes.Ldloc, i);
+                    Il.Emit(OpCodes.Callvirt, ia.GetMethod("InBounds")!);
+                    return Branch2(
+                        () =>
+                        {
+                            Il.Emit(OpCodes.Ldloc, a);
+                            Il.Emit(OpCodes.Ldloc, i);
+                            Il.Emit(OpCodes.Callvirt, ia.GetMethod("Get")!);
+                            Il.Emit(OpCodes.Unbox_Any, el.ClrType);
+                            return el;
+                        },
+                        () =>
+                        {
+                            Repr d = Emit(Expr.MkApp(Expr.Const(Name.Parse("Inhabited.default"), c.Levels), args[0], args[1]));
+                            Coerce(d, el);
+                            return el;
+                        });
+                }
+                case "Array.push":
+                    Coerce(Emit(args[2]), el);
+                    BoxIfValue(el.ClrType);
+                    Il.Emit(OpCodes.Callvirt, ia.GetMethod("Push")!);
+                    break;
+                default:
+                    Coerce(Emit(args[2]), nat);
+                    Coerce(Emit(args[3]), el);
+                    BoxIfValue(el.ClrType);
+                    Il.Emit(OpCodes.Callvirt, ia.GetMethod(op == "Array.set" ? "Set" : "SetIfInBounds")!);
+                    break;
+            }
+            Il.Emit(OpCodes.Castclass, ar.ClrType);
+            return ar;
         }
 
         private void BoxIfValue(Type t)

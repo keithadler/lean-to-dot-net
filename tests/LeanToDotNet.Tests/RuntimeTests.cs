@@ -67,4 +67,50 @@ public class RuntimeTests
         Assert.Throws<OverflowException>(() => DecimalBridge.FromParts(BigInteger.One << 96, 0));
         Assert.Throws<OverflowException>(() => DecimalBridge.FromParts(1, 29));
     }
+
+    // Each expected value is Lean 4.33.1's #eval of the expression in the comment beside it.
+    [Fact]
+    public void FixedWidthMatchesLeanWhereCSharpDiffers()
+    {
+        Assert.Equal((byte)0, LeanFixed.UInt8Div(7, 0));               // (7:UInt8)/0 = 0; C# throws
+        Assert.Equal((byte)7, LeanFixed.UInt8Mod(7, 0));               // (7:UInt8)%0 = 7
+        Assert.Equal((byte)2, LeanFixed.UInt8ShiftLeft(1, 9));         // (1:UInt8) <<< 9 = 2; C# gives 0
+        Assert.Equal((byte)64, LeanFixed.UInt8ShiftRight(128, 9));     // (128:UInt8) >>> 9 = 64
+        Assert.Equal((ushort)65535, LeanFixed.UInt16Sub(0, 1));        // (0:UInt16) - 1
+        Assert.Equal((ushort)1, LeanFixed.UInt16Mul(65535, 65535));    // (65535:UInt16) * 65535
+        Assert.Equal((sbyte)-128, LeanFixed.Int8Div(-128, -1));        // (-128:Int8)/(-1) = -128; C# throws
+        Assert.Equal((sbyte)0, LeanFixed.Int8Mod(-128, -1));           // (-128:Int8)%(-1) = 0
+        Assert.Equal((sbyte)0, LeanFixed.Int8Div(-7, 0));              // (-7:Int8)/0 = 0
+        Assert.Equal((sbyte)-7, LeanFixed.Int8Mod(-7, 0));             // (-7:Int8)%0 = -7
+        Assert.Equal((sbyte)-3, LeanFixed.Int8Div(-7, 2));             // truncates, like C#
+        Assert.Equal((sbyte)-1, LeanFixed.Int8Mod(-7, 2));
+        Assert.Equal((sbyte)-4, LeanFixed.Int8ShiftRight(-8, 1));      // arithmetic shift
+        Assert.Equal((sbyte)-128, LeanFixed.Int8ShiftLeft(1, 7));
+        Assert.Equal((sbyte)-128, LeanFixed.Int8ShiftLeft(1, -1));     // a count of -1 is 7
+        Assert.Equal((sbyte)-1, LeanFixed.Int8ShiftRight(-1, -1));
+        Assert.Equal(int.MinValue, LeanFixed.Int32Div(int.MinValue, -1)); // C# throws OverflowException
+        Assert.Equal(2UL, LeanFixed.UInt64ShiftLeft(1, 65));           // (1:UInt64) <<< 65 = 2
+        Assert.Equal(BigInteger.Zero, LeanFixed.Int64ToNatClampNeg(-1)); // (Int64.ofInt (-1)).toNatClampNeg
+        Assert.Equal(5UL, LeanFixed.UInt64OfNat(BigInteger.Pow(2, 64) + 5));
+        Assert.Equal((short)25536, LeanFixed.Int16OfInt(-40000));      // Int16.ofInt (-40000)
+        Assert.Equal(short.MinValue, LeanFixed.Int16Neg(short.MinValue));
+        Assert.Equal(uint.MaxValue, LeanFixed.UInt32Complement(0));
+        Assert.Equal(-6L, LeanFixed.Int64Xor(5, -1));
+    }
+
+    [Fact]
+    public void PushingOntoAnOlderArrayDoesNotChangeANewerOne()
+    {
+        LeanArray<int> a = LeanArray<int>.Empty.Push(1).Push(2);
+        LeanArray<int> b = a.Push(3);    // written into a's spare room
+        LeanArray<int> c = a.Push(4);    // must not overwrite b's 3
+        Assert.Equal(new[] { 1, 2, 3 }, b);
+        Assert.Equal(new[] { 1, 2, 4 }, c);
+        Assert.Equal(new[] { 1, 2 }, a);
+        LeanArray<int> d = b.Set(0, 9);
+        Assert.Equal(new[] { 9, 2, 3 }, d);
+        Assert.Equal(new[] { 1, 2, 3 }, b);
+        Assert.Equal("#[1, 2, 3]", b.ToString());
+        Assert.Equal(LeanList.Of(1, 2, 3), b.ToList());
+    }
 }

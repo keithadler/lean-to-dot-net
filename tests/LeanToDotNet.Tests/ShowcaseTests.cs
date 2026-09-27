@@ -5,7 +5,7 @@ using Xunit;
 
 namespace LeanToDotNet.Tests;
 
-/// <summary>Recursion, lists, options and strings, as a C# caller sees them.</summary>
+/// <summary>Recursion, lists, options, strings, lambdas, custom types and fixed-width integers, as a C# caller sees them.</summary>
 public class ShowcaseTests
 {
     [Fact]
@@ -53,4 +53,105 @@ public class ShowcaseTests
     [Fact]
     public void ANegativeNatIsStillRefused() =>
         Assert.Throws<ArgumentOutOfRangeException>(() => Proven.SumTo(-1));
+
+    [Fact]
+    public void LambdasKeepTheirLocals()
+    {
+        Assert.Equal(new BigInteger[] { 11, 12, 13 }, Proven.AddAll(10, new BigInteger[] { 1, 2, 3 }));
+        Assert.Equal(new BigInteger[] { 3, 4 }, Proven.Between(2, 5, new BigInteger[] { 1, 2, 3, 4, 5, 6 }));
+        Assert.Equal(1 + 5 + 5, Proven.CappedSum(5, new BigInteger[] { 1, 7, 9 }));
+        Assert.Equal(new BigInteger[] { 1, -2 }, Proven.Scale(2, 3, new BigInteger[] { 2, -2 }));   // floor(-4/3) = -2
+    }
+
+    [Fact]
+    public void ASyntaxTreeIsAClassHierarchy()
+    {
+        // 2 * (x + 3) with x = 4
+        Arith e = new Arith.Mul(new Arith.Num(2), new Arith.Add(new Arith.Var(0), new Arith.Num(3)));
+        Assert.Equal(14, Proven.Eval(new BigInteger[] { 4 }, e));
+        Arith folded = Proven.Fold(new Arith.Add(new Arith.Num(2), new Arith.Num(3)));
+        Assert.Equal(5, Assert.IsType<Arith.Num>(folded).N);
+        Assert.IsType<Arith.Num>(Proven.Fold(new Arith.Mul(new Arith.Var(7), new Arith.Num(0))));
+    }
+
+    [Fact]
+    public void TreesSortAndSearch()
+    {
+        Assert.Equal(new BigInteger[] { -4, 1, 2, 3, 9 }, Proven.TreeSort(new BigInteger[] { 3, 9, 1, -4, 2, 3 }));
+        Tree t = Proven.OfList(new BigInteger[] { 5, 2, 8 });
+        Assert.True(Proven.Contains(8, t));
+        Assert.False(Proven.Contains(7, t));
+        Assert.True(Proven.Contains(7, Proven.Insert(7, t)));
+        Assert.Equal(Enumerable.Range(0, 2000).Select(i => (BigInteger)i), Proven.TreeSort(Enumerable.Range(0, 2000).Select(i => (BigInteger)i).ToArray()));
+    }
+
+    [Fact]
+    public void ResultsCarryTheirCase()
+    {
+        Assert.Equal(3, Assert.IsType<Result.Ok>(Proven.SafeDiv(7, 2)).Value);
+        Assert.Equal("cannot divide 7 by zero", Assert.IsType<Result.Error>(Proven.SafeDiv(7, 0)).Message);
+        PairOfIntInt mm = Proven.MinMax(new BigInteger[] { 3, -1, 8 }).Value;
+        Assert.Equal((-1, 8), ((int)mm.First, (int)mm.Second));
+        Assert.False(Proven.MinMax(new BigInteger[0]).IsSome);
+    }
+
+    [Fact]
+    public void FixedWidthIntegersAreTheCSharpTypes()
+    {
+        byte[] hello = System.Text.Encoding.ASCII.GetBytes("hello");
+        Assert.Equal(0xa430d84680aabd0bUL, Proven.Fnv1a(hello));   // the published FNV-1a 64 of "hello"
+        Assert.Equal((byte)255, Proven.SaturatingAdd(200, 100));
+        Assert.Equal((byte)44, unchecked((byte)(200 + 100)));
+        Assert.Equal(3u, Proven.RotateLeft(0x80000001u, 1));
+        Assert.Equal(0x80000001u, Proven.RotateLeft(0x80000001u, 32));   // Lean's shift count wraps; so does this
+        Assert.Equal(int.MinValue, Proven.ClampToInt32(BigInteger.Pow(-10, 11)));
+    }
+
+    [Fact]
+    public void TheMidpointBugAndItsFix()
+    {
+        int lo = 2_000_000_000, hi = 2_100_000_000;
+        Assert.Equal(unchecked(lo + hi) / 2, Proven.NaiveMidpoint(lo, hi));   // wraps negative, as it does in C#
+        Assert.True(Proven.NaiveMidpoint(lo, hi) < 0);
+        Assert.Equal(2_050_000_000, Proven.Midpoint(lo, hi));
+        Assert.Equal(int.MaxValue - 1, Proven.Midpoint(int.MaxValue - 2, int.MaxValue));
+    }
+
+    [Fact]
+    public void ArraysAreArrays()
+    {
+        Assert.Equal(6, Proven.ArraySum(new BigInteger[] { 1, 2, 3 }));
+        Assert.Equal(new BigInteger[] { 1, 3, 6 }, Proven.RunningTotals(new BigInteger[] { 1, 2, 3 }));
+        Assert.Equal(new BigInteger[] { 1, 2, 0 }, Proven.Histogram(3, new BigInteger[] { 1, 3, 0, 1, 7 }));
+        Assert.Equal(new BigInteger[] { -2, 0, 4 }, Proven.Evens(new BigInteger[] { -2, -1, 0, 3, 4 }));
+        Assert.Equal((byte)44, Proven.Checksum(new byte[] { 200, 100 }));
+    }
+
+    [Fact]
+    public void BinarySearchOnALargeArray()
+    {
+        BigInteger[] sorted = Enumerable.Range(0, 100_000).Select(i => (BigInteger)(2 * i)).ToArray();
+        LeanArray<BigInteger> a = sorted;
+        Assert.Equal(31_415, Proven.BinarySearch(a, 62_830).Value);
+        Assert.False(Proven.BinarySearch(a, 62_831).IsSome);
+        Assert.Equal(99_999, Proven.BinarySearch(a, 199_998).Value);
+        LeanArray<BigInteger> totals = Proven.RunningTotals(Enumerable.Repeat((BigInteger)1, 200_000).ToArray());
+        Assert.Equal(200_000, totals[^1]);   // 200,000 pushes: linear, not quadratic
+    }
+
+    [Fact]
+    public void LeansArrayLibraryCompiles()
+    {
+        Assert.Equal(new BigInteger[] { 3, -6 }, Proven.ScaleAll(3, new BigInteger[] { 1, -2 }));
+        Assert.Equal(new BigInteger[] { 3, 2, 1 }, Proven.Reversed(new BigInteger[] { 1, 2, 3 }));
+        Assert.Empty(Proven.Reversed(new BigInteger[0]));
+        Assert.Equal(new BigInteger[] { 0, 1, 4, 9, 16 }, Proven.Squares(5));
+        LeanArray<ProdOfIntInt> pairs = Proven.PairUp(new BigInteger[] { 1, 2, 3 }, new BigInteger[] { 10, 20 });
+        Assert.Equal(2, pairs.Count);
+        Assert.Equal((2, 20), ((int)pairs[1].Fst, (int)pairs[1].Snd));
+        Assert.True(Proven.AnyOver(10, new BigInteger[] { 3, 11 }));
+        Assert.False(Proven.AnyOver(10, new BigInteger[] { 3, 10 }));
+        Assert.Equal(20, Proven.ItemAt(new BigInteger[] { 10, 20 }, 1).Value);
+        Assert.False(Proven.ItemAt(new BigInteger[] { 10, 20 }, 2).IsSome);
+    }
 }

@@ -244,16 +244,21 @@ and reference `.lake/dotnet/<Namespace>.Proven.dll` and `.lake/dotnet/LeanToDotN
 | `String` | `string`; lengths count characters, as Lean's do |
 | `List α` | `LeanList<T>`, immutable; C# can pass an array where one is expected |
 | `Option α` | `LeanOption<T>` |
+| `Array α` | `LeanArray<T>`, backed by a .NET array: constant-time `a[i]` and `size`, linear `push` loops; C# passes a `T[]` |
+| `UInt8` ... `UInt64`, `Int8` ... `Int64` | `byte` ... `ulong`, `sbyte` ... `long`: wrapping arithmetic, and Lean's meaning where C#'s differs (`x / 0 = 0`, shift counts wrap) |
 | a structure, an enum-like inductive | a sealed class, a .NET enum |
+| an inductive with data, or recursive (trees, syntax, results) | an abstract class with a `Tag` and a sealed nested class per constructor |
+| a type with parameters, `Pair Int String` | a class per use, `PairOfIntString` |
 | a structure of an `Int` and a `Nat` | also `decimal`, through an overload |
 
 Definitions compile with `if`, `match`, `let`, instances, numerals and coercions, and **recursion**: structural
-or well-founded, your own or Lean's library's (`List.map`, `foldr`, `length`, `reverse`, `++`, `sum`). A function
-passed as an argument compiles when it uses no local variables, by specializing the function to it, as a C++
-template would be.
+or well-founded, your own or Lean's library's (`List.map`, `foldr`, `filter`, `Array.foldl`, `++`, `sum`).
+Lambdas compile, including ones that use local variables: `xs.map (fun x => x + k)` becomes a copy of
+`List.map` that takes `k` as a parameter. No delegates, no allocation per call.
 
-Not yet, and refused with a message that says why rather than compiled wrong: a lambda that captures local
-variables, `Float`, `Array`, and user-defined inductive types with parameters, indices or recursive fields.
+Not yet, and refused with a message that says why rather than compiled wrong: `Float`, `Char`, a function stored
+or returned as a value, and inductive types with indices, mutual inductives, or a type nested in itself through
+a `List`.
 [`examples/showcase`](examples/showcase) shows every supported feature, and the build compiles and
 differential-tests it every time.
 
@@ -273,7 +278,7 @@ differential-tests it every time.
 | Path | |
 |---|---|
 | [`lean/`](lean) | the Lake project: `Finance/Rounding.lean` and `Finance/Split.lean`, definitions and proofs |
-| [`examples/showcase/`](examples/showcase) | recursion, lists, options and strings, compiled and differential-tested on every build |
+| [`examples/showcase/`](examples/showcase) | recursion, lists, options, strings, lambdas, your own types, fixed-width integers and arrays, compiled and differential-tested on every build |
 | [`src/Lean2Il/`](src/Lean2Il) | the compiler: `Compiler.cs` (kernel term to IL), `Equations.cs` (equation lemmas), `Differential.cs` (Lean vs IL), `Docs.cs` (docs and replay), `Primitives.cs` |
 | [`src/LeanToDotNet.Runtime/`](src/LeanToDotNet.Runtime) | what the emitted assembly calls: `LeanNat`, `LeanInt`, `LeanList`, `LeanOption`, `LeanString`, `LeanStack`, `DecimalBridge` |
 | [`tests/`](tests) | runtime against Lean, `Proven.Round` against `Math.Round(decimal)`, the three bugs |

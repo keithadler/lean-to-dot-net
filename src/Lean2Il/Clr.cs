@@ -44,6 +44,11 @@ internal sealed class Clr : IDisposable
     public Type RuntimeMethodHandle { get; }
     public Type LeanStack { get; }
     public Type LeanStackOverflow { get; }
+    public Type LeanFixed { get; }
+    public Type LeanArray { get; }
+    public Type ILeanArray { get; }
+    /// <summary>The .NET integer for each Lean fixed-width integer, by Lean name.</summary>
+    public Dictionary<string, Type> Fixed { get; } = new();
     public MethodInfo Getter(Type t, string property) => t.GetProperty(property)!.GetGetMethod()!;
 
     public Clr(string runtimeAssemblyPath)
@@ -76,6 +81,13 @@ internal sealed class Clr : IDisposable
         RuntimeMethodHandle = Core("System.RuntimeMethodHandle");
         LeanStack = runtime.GetType("LeanToDotNet.Runtime.LeanStack", throwOnError: true)!;
         LeanStackOverflow = runtime.GetType("LeanToDotNet.Runtime.LeanStackOverflowException", throwOnError: true)!;
+        LeanFixed = runtime.GetType("LeanToDotNet.Runtime.LeanFixed", throwOnError: true)!;
+        LeanArray = runtime.GetType("LeanToDotNet.Runtime.LeanArray`1", throwOnError: true)!;
+        ILeanArray = runtime.GetType("LeanToDotNet.Runtime.ILeanArray", throwOnError: true)!;
+        foreach (FixedWidth f in FixedWidth.All)
+        {
+            Fixed[f.Lean] = Core(f.Clr);
+        }
     }
 
     private Type Core(string name) => CoreAssembly.GetType(name, throwOnError: true)!;

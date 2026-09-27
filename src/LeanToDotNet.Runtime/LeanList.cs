@@ -156,6 +156,9 @@ public static class LeanOps
 
     public static object None(RuntimeTypeHandle optionType) => Empty(optionType, "None");
 
+    /// <summary><c>Array.mk items</c>: the array holding a list's items, at the array type named by the token.</summary>
+    public static ILeanArray ArrayOf(ILeanList items, RuntimeTypeHandle arrayType) => ((ILeanArray)Empty(arrayType, "Empty")).Append(items);
+
     private static object Empty(RuntimeTypeHandle h, string property) =>
         s_empty.GetOrAdd(h, x => Type.GetTypeFromHandle(x)!.GetProperty(property)!.GetValue(null)!);
 }

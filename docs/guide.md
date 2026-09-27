@@ -84,8 +84,14 @@ any Lake dependencies under `.lake/packages`.
 | `String` | `string`; `String.length` counts characters (code points), as Lean does, not UTF-16 units |
 | `List α` | `LeanList<T>`: immutable, singly linked, an `IReadOnlyList<T>`; an array converts to one implicitly |
 | `Option α` | `LeanOption<T>`: `IsSome`, `Value`, `None`, `Some(x)` |
+| `Array α` | `LeanArray<T>`: an `IReadOnlyList<T>` over a .NET array; a `T[]` converts to one implicitly |
+| `UInt8`, `UInt16`, `UInt32`, `UInt64` | `byte`, `ushort`, `uint`, `ulong` |
+| `Int8`, `Int16`, `Int32`, `Int64` | `sbyte`, `short`, `int`, `long` |
 | an inductive whose constructors take no arguments | a .NET `enum`, cases in the same order |
 | a structure | a sealed class with a constructor and one public read-only field per field |
+| any other inductive: several constructors with data, or recursive | an abstract class with an `int Tag`, and a sealed nested class per constructor: `new Arith.Add(new Arith.Num(2), new Arith.Var(0))` |
+| a type with parameters | one class per instantiation: `Pair Int String` is `PairOfIntString`, `Int × Int` is `ProdOfIntInt` |
+| `Fin n`, a subtype `{x // p x}` | the value alone, as Lean's compiler does: `BigInteger`, or the type of `x`. A caller passing one in keeps the promise the proof made; the differential test skips such functions |
 | a structure of an `Int` and then a `Nat` | also accepted and returned as `decimal`, through an overload |
 | types, type-class instances, proofs | erased: they are not parameters at all |
 
@@ -149,18 +155,50 @@ instances, numerals and coercions (unfolded at compile time); recursion, as abov
 and `Int` arithmetic including Lean's division, modulo, power, gcd, shifts and bitwise operations; string
 concatenation, length, equality, and `toString` of numbers.
 
-A **function argument** compiles when it uses no local variables: the function it is passed to is specialized to
-it, as a C++ template would be. So `xs.sum` and `xs.map (fun x => 2 * x)` compile, and
-`xs.map (fun x => x + k)` with a local `k` does not, yet.
+A **function argument** compiles by specializing the function it is passed to, as a C++ template would be.
+When the lambda uses local variables, they become extra parameters of the copy: `xs.map (fun x => x + k)`
+calls a `List.map` that takes `k`. So `xs.sum`, `xs.filter (fun x => lo < x && x < hi)` and
+`xs.foldl (fun acc x => acc + min x cap) 0` all compile to direct calls, with no delegate.
+
+### Fixed-width integers
+
+`UInt8` ... `UInt64` and `Int8` ... `Int64` are the .NET integers of the same width and sign, so a C# caller
+passes and gets ordinary `byte`, `int`, `ulong`. Arithmetic wraps, as C#'s unchecked arithmetic does. Where Lean
+and C# disagree, the compiled code does what Lean does:
+
+| | Lean, and the compiled code | C# |
+|---|---|---|
+| `x / 0` | `0` | throws `DivideByZeroException` |
+| `x % 0` | `x` | throws |
+| `Int32.MinValue / -1` | `Int32.MinValue` | throws `OverflowException` |
+| `(1 : UInt8) <<< 9` | `2`: the count wraps around the width | `0` |
+| `Int8` shift by `-1` | a shift by `7` | a shift by `31` after promotion |
+
+Conversions between widths (`x.toUInt32`, `x.toInt64`) wrap or sign-extend like C#'s casts, `toNat` and `toInt`
+give a `BigInteger`, and `ofNat`/`ofInt` keep the low bits. Numerals are folded at compile time.
+
+### Arrays
+
+`Array α` is a `LeanArray<T>`, backed by a .NET array. `a.size`, `a[i]`, `a[i]!`, `a.push x`, `a.set i x` and
+`a.set! i x` are the array's own constant-time operations; the rest of the library (`foldl`, `filter`, `append`,
+`reverse`, `contains`, `any`, `zip`) is compiled from Lean's own recursive definitions over them.
+
+`Array.map`, `mapIdx` and `range` are defined through `private` helpers, whose equation lemmas cannot be named from
+outside Lean's library. For those, the equations module states a restatement over lists, such as
+`Array.map = fun f xs => (xs.toList.map f).toArray`, Lean proves it, Tenet re-checks the proof, and lean2il
+compiles the right-hand side. The table of restatements is `Equations.Replacements`; nothing is replaced without
+a proof. Lean updates an array
+in place when nothing else holds it; compiled code cannot know that, so arrays share a buffer and `push` onto
+the newest array writes into its spare room. Building an array by pushing is linear, as in Lean. `set` copies,
+so a loop that sets every element is quadratic; build with `push` where you can.
 
 Not yet, and refused with a message rather than compiled wrong:
 
 | Refused | Message |
 |---|---|
-| a lambda that captures local variables | `is passed a function that uses local variables` |
 | a function stored or returned as a value | `a function value would be needed at run time` |
-| `Float`, `Array`, `Char`, `UInt64` and other types without a mapping | `no run-time form for the type ...` |
-| user inductives with parameters, indices or recursive fields | `the type X is not compiled: it is recursive` (or has parameters, or indices) |
+| `Float`, `Char` and other types without a mapping | `no run-time form for the type ...` |
+| inductives with indices, mutual inductives, a type nested in itself (`children : List Tree`) | `the type X is not compiled: it has indices` (or is mutually inductive, or contains itself inside another type) |
 | types from outside the project, other than the built-in ones above | `only types declared in the compiled project become .NET types` |
 | a recursive definition Lean gives no equation lemma for | `is recursive and Lean gave no equation lemma for it` |
 | `partial` and `unsafe` definitions | `is partial or unsafe; lean2il compiles only what the kernel checked` |
