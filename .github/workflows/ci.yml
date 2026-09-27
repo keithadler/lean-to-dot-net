@@ -59,7 +59,7 @@ jobs:
       - name: VSIX
         if: matrix.os == 'ubuntu-latest'
         working-directory: vscode
-        run: npx --yes @vscode/vsce@3 package --no-dependencies
+        run: npx --yes @vscode/vsce@3 package --no-dependencies --baseContentUrl https://github.com/keithadler/lean-to-dot-net/blob/HEAD/vscode --baseImagesUrl https://github.com/keithadler/lean-to-dot-net/raw/HEAD/vscode
 
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'ubuntu-latest'

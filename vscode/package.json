@@ -274,7 +274,7 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "prepackage": "dotnet publish ../src/Lean2Il -c Release -o server -p:UseAppHost=false -p:DebugType=none -nologo -v q",
-    "package": "npm run prepackage && npx --yes @vscode/vsce@3 package --no-dependencies",
+    "package": "npm run prepackage && npx --yes @vscode/vsce@3 package --no-dependencies --baseContentUrl https://github.com/keithadler/lean-to-dot-net/blob/HEAD/vscode --baseImagesUrl https://github.com/keithadler/lean-to-dot-net/raw/HEAD/vscode",
     "test:integration": "node test/integration/run.js"
   },
   "preview": true,
