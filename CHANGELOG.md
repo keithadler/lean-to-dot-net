@@ -27,6 +27,11 @@ What the review of 0.1 asked for: a bigger fragment and a stronger check on the 
 - **A harder demo**: `Finance/Split.lean` splits a bill into shares proved to add up to exactly the total,
   refunds included, and to differ by at most a cent.
 - `examples/showcase`, 43 functions compiled and differential-tested on every build; 68 C# tests.
+- **NuGet packages**: `lean2il` (the tool), `LeanToDotNet.Runtime`, and **`LeanToDotNet.Build`**, which makes
+  `dotnet build` compile a project's Lean: add the package, list `<LeanProject Include="../lean" />`, and lake,
+  Tenet, lean2il and the reference happen before the C# compiler, incrementally. `tests/package-smoke.sh` builds a
+  new project that way on every CI run.
+- `Float` and `Char` are refused with their own reasons instead of a misleading one.
 - The differential test turns off Lean's panic backtraces (`LEAN_BACKTRACE=0`); an input that makes Lean's code
   panic now costs microseconds instead of a second.
 - Fixes: Lean's `'`, `?` and `!` in names become valid .NET names; Lean-internal `_unary` exports are skipped.

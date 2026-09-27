@@ -95,8 +95,8 @@ const tests = [
     const scratch = path.join(root, 'lean', 'Finance', 'ScratchRec.lean');
     const finance = path.join(root, 'lean', 'Finance.lean');
     const original = fs.readFileSync(finance, 'utf8');
-    // Something lean2il still refuses: a lambda that captures a local variable.
-    fs.writeFileSync(scratch, 'namespace Finance\n\n/-- Adds k to each. -/\n@[export lean2il_scratch_rec]\ndef addAll (k : Int) (xs : List Int) : List Int := xs.map (fun x => x + k)\n\nend Finance\n');
+    // Something lean2il still refuses: floating point.
+    fs.writeFileSync(scratch, 'namespace Finance\n\n/-- Halves it. -/\n@[export lean2il_scratch_rec]\ndef half (x : Float) : Float := x / 2\n\nend Finance\n');
     fs.writeFileSync(finance, original + 'import Finance.ScratchRec\n');
     const api = vscode.extensions.getExtension('keithadler.lean-to-dot-net').exports;
     try {
@@ -109,8 +109,8 @@ const tests = [
         const d = vscode.languages.getDiagnostics(vscode.Uri.file(scratch));
         return d.length > 0 && d;
       }, 20000);
-      assert.match(diags[0].message, /uses local variables/);
-      assert.equal(diags[0].range.start.line, 3, 'on the @[export] line of addAll');
+      assert.match(diags[0].message, /Float is not compiled/);
+      assert.equal(diags[0].range.start.line, 3, 'on the @[export] line of half');
     } finally {
       fs.writeFileSync(finance, original);
       fs.rmSync(scratch, { force: true });

@@ -38,10 +38,37 @@ Lean project's declarations, also built on Tenet. The generated docs can link ea
 | .NET 10 SDK | `./setup.sh` runs Microsoft's `dotnet-install.sh` into `~/.dotnet` | Or install it from [dot.net](https://dot.net). |
 | Tenet (the library) | nothing | `lean2il` references `Tenet.Olean` 0.11.1 from nuget.org; `dotnet` restores it. |
 | Tenet (the `tenet` command) | `dotnet tool restore` | Pinned in [`dotnet-tools.json`](../dotnet-tools.json). Use it to re-check or audit a project on its own: `dotnet tenet check lean --all`. |
-| lean2il (the command) | `./setup.sh`, or `dotnet tool update -g lean2il --add-source ./artifacts` after `./build.sh` | A .NET global tool in `~/.dotnet/tools`. |
+| lean2il (the command) | `dotnet tool install -g lean2il`, or `./setup.sh` from a clone | A .NET global tool in `~/.dotnet/tools`. |
+| lean2il in `dotnet build` | the [`LeanToDotNet.Build`](https://www.nuget.org/packages/LeanToDotNet.Build) package; see [MSBuild](#msbuild) | It bundles lean2il and Tenet and brings in `LeanToDotNet.Runtime`. |
 | The VS Code extension | the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=keithadler.lean-to-dot-net) or, for Cursor, Windsurf and VSCodium, [Open VSX](https://open-vsx.org/extension/keithadler/lean-to-dot-net); or `code --install-extension keithadler.lean-to-dot-net` | It bundles lean2il and Tenet: with it, you need only the .NET 10 runtime and Lean. |
 
 On Windows, `setup.ps1` does the same as `setup.sh`.
+
+## MSBuild
+
+With the `LeanToDotNet.Build` package, a .NET project compiles its Lean projects itself:
+
+```xml
+<ItemGroup>
+  <PackageReference Include="LeanToDotNet.Build" Version="0.3.0" />
+  <LeanProject Include="../lean" />
+</ItemGroup>
+```
+
+Before the C# compiler runs, for each `LeanProject`: `lake build`, then lean2il into `obj/.../lean2il/<folder>/`.
+The emitted assembly is referenced (its XML docs beside it, for IntelliSense) and copied to the output with
+`LeanToDotNet.Runtime.dll`. Lean's errors are the build's errors. The step is skipped while no `.lean` file, lakefile
+or `lean-toolchain` has changed, and in IDE design-time builds, which use the last assembly.
+
+| Property | Default | |
+|---|---|---|
+| `LeanLakeBuild` | `true` | run `lake build` first |
+| `LeanCheckImports` | `false` | have Tenet re-check Lean's library under the project too, not only the project (lean2il without `--trust-imports`) |
+| `LeanFuzz` | `100` | random inputs per function for the differential test; `0` skips it |
+| `Lean2IlPath` | the package's copy | a different `lean2il.dll` |
+
+Metadata on a `LeanProject` item: `Assembly`, `Namespace`, `Class`, passed to lean2il's options of the same names.
+`lake` is looked for on `PATH` and in `~/.elan/bin`.
 
 ## Command line
 
@@ -197,7 +224,8 @@ Not yet, and refused with a message rather than compiled wrong:
 | Refused | Message |
 |---|---|
 | a function stored or returned as a value | `a function value would be needed at run time` |
-| `Float`, `Char` and other types without a mapping | `no run-time form for the type ...` |
+| `Float`, `Float32` | `Float is not compiled yet: Lean's kernel does not model floating point` |
+| `Char` and other types without a mapping | `Char is not compiled yet`, `no run-time form for the type ...` |
 | inductives with indices, mutual inductives, a type nested in itself (`children : List Tree`) | `the type X is not compiled: it has indices` (or is mutually inductive, or contains itself inside another type) |
 | types from outside the project, other than the built-in ones above | `only types declared in the compiled project become .NET types` |
 | a recursive definition Lean gives no equation lemma for | `is recursive and Lean gave no equation lemma for it` |

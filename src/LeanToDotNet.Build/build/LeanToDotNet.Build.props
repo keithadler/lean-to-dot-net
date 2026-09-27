@@ -1,0 +1,11 @@
+<Project>
+  <!-- Defaults; set any of these in your project to change them. -->
+  <PropertyGroup>
+    <!-- Run `lake build` in each Lean project before compiling it. -->
+    <LeanLakeBuild Condition="'$(LeanLakeBuild)' == ''">true</LeanLakeBuild>
+    <!-- Re-check Lean's library under the project with Tenet too, not only the project's modules (slower). -->
+    <LeanCheckImports Condition="'$(LeanCheckImports)' == ''">false</LeanCheckImports>
+    <!-- Random inputs per exported function for the differential test against Lean's compiler; 0 skips it. -->
+    <LeanFuzz Condition="'$(LeanFuzz)' == ''">100</LeanFuzz>
+  </PropertyGroup>
+</Project>

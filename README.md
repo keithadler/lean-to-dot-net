@@ -235,6 +235,22 @@ lean2il .
 
 and reference `.lake/dotnet/<Namespace>.Proven.dll` and `.lake/dotnet/LeanToDotNet.Runtime.dll` from C#.
 
+**In a .NET project, on every build:** add the [`LeanToDotNet.Build`](https://www.nuget.org/packages/LeanToDotNet.Build)
+package and list your Lean project:
+
+```xml
+<ItemGroup>
+  <PackageReference Include="LeanToDotNet.Build" Version="0.3.0" />
+  <LeanProject Include="../lean" />
+</ItemGroup>
+```
+
+`dotnet build` then runs `lake build` and lean2il (bundled in the package, Tenet included) before the C# compiler,
+references the proven assembly with its IntelliSense docs, and copies it to the output. A broken proof fails the
+.NET build with Lean's message. Nothing reruns until a `.lean` file changes. You need Lean and the .NET 10 SDK;
+[`tests/package-smoke.sh`](tests/package-smoke.sh) does exactly this from scratch, in CI on Linux, macOS and
+Windows.
+
 ## What the compiler supports
 
 | Lean | .NET |

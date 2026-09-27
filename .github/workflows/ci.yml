@@ -56,6 +56,12 @@ jobs:
       - name: Sample
         run: dotnet run --project samples/Invoice -c Release
 
+      - name: NuGet packages, and a new project that builds Lean with them
+        shell: bash
+        run: |
+          for p in src/Lean2Il src/LeanToDotNet.Runtime src/LeanToDotNet.Build; do dotnet pack "$p" -c Release -o artifacts; done
+          tests/package-smoke.sh
+
       - name: VSIX
         if: matrix.os == 'ubuntu-latest'
         working-directory: vscode
@@ -68,6 +74,7 @@ jobs:
           path: |
             lean/.lake/dotnet/
             vscode/*.vsix
+            artifacts/*.nupkg
 
   vscode:
     # The extension: unit tests, the package (with lean2il bundled), and the integration suite in a real VS Code.

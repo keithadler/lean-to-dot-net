@@ -66,8 +66,9 @@ function parseBuildOutput(output) {
     if (tenet) { problems.push({ kind: 'tenet', name: tenet[1], severity: 'error', message: 'Tenet rejected this declaration: ' + tenet[2] }); continue; }
     const diff = /^lean2il: the IL disagrees with Lean's own compiler on ([A-Za-z_][\w.']*) (.*)$/.exec(lines[i]);
     if (diff) { problems.push({ kind: 'lean2il', name: diff[1], severity: 'error', message: `The compiled code and Lean's own compiler disagree on ${diff[1]} ${diff[2]}. This is a lean2il bug; please report it.` }); continue; }
-    const l2 = /^lean2il: ([A-Za-z_][\w.']*): (.*)$/.exec(lines[i]);
-    if (l2 && l2[1].includes('.')) { problems.push({ kind: 'lean2il', name: l2[1], severity: 'error', message: 'lean2il cannot compile this: ' + l2[2] }); continue; }
+    // "lean2il: Finance.half: why" or, naming the part at fault, "lean2il: Finance.half, parameter x: why".
+    const l2 = /^lean2il: ([A-Za-z_][\w.'!?]*)(?:, ([^:]+))?: (.*)$/.exec(lines[i]);
+    if (l2 && l2[1].includes('.')) { problems.push({ kind: 'lean2il', name: l2[1], severity: 'error', message: 'lean2il cannot compile this: ' + (l2[2] ? l2[2] + ': ' : '') + l2[3] }); continue; }
     const general = /^lean2il: (.*)$/.exec(lines[i]);
     if (general && !/^(\d+ modules? in |skipping )/.test(general[1])) problems.push({ kind: 'lean2il', severity: 'error', message: general[1] });
   }

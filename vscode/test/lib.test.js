@@ -60,6 +60,12 @@ lean2il: nothing is marked @[export]; mark each definition to compile with @[exp
   assert.match(p[0].message, /structural recursion/);
 });
 
+test('parseBuildOutput places a refusal that names a parameter on its function', () => {
+  const p = lib.parseBuildOutput("lean2il: Finance.half, parameter x: Float is not compiled yet: Lean's kernel does not model floating point");
+  assert.deepEqual(p.map(x => [x.kind, x.name]), [['lean2il', 'Finance.half']]);
+  assert.match(p[0].message, /parameter x: Float is not compiled/);
+});
+
 test('parseBuildOutput places a differential failure on the function it names', () => {
   const p = lib.parseBuildOutput(`lean2il: the IL disagrees with Lean's own compiler on Rec.chars "a😀": Lean gives 2, the IL gives 3`);
   assert.equal(p.length, 1);

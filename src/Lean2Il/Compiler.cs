@@ -195,6 +195,10 @@ internal sealed class Compiler
                 case "String": return new Repr(Kind.String, _clr.String);
                 case "UInt8" or "UInt16" or "UInt32" or "UInt64" or "Int8" or "Int16" or "Int32" or "Int64":
                     return new Repr(Kind.Fixed, _clr.Fixed[c.Name.ToString()]);
+                case "Float" or "Float32":
+                    return new Repr(Kind.Unsupported, Why: $"{c.Name} is not compiled yet: Lean's kernel does not model floating point, so there is nothing proved about it to preserve");
+                case "Char":
+                    return new Repr(Kind.Unsupported, Why: "Char is not compiled yet; use String, or the code point as a Nat or UInt32");
                 // A value and a proof about it: at run time just the value, as in Lean's own compiler.
                 case "Fin": return new Repr(Kind.Nat, _clr.BigInteger) { Constrained = true };
                 case "Subtype":

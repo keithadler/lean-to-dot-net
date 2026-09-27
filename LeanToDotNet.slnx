@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Lean2Il/Lean2Il.csproj" />
     <Project Path="src/LeanToDotNet.Runtime/LeanToDotNet.Runtime.csproj" />
+    <Project Path="src/LeanToDotNet.Build/LeanToDotNet.Build.csproj" />
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/Invoice/Invoice.csproj" />

@@ -3,8 +3,10 @@
 ## 0.4.0
 
 - Bundles lean2il 0.3.0: recursive definitions (compiled from the equation lemmas Lean proves for them), lists,
-  options and strings, deep recursion without stack overflows, and a differential test of every build against
-  Lean's own compiler.
+  options, strings and arrays, lambdas that use local variables, your own data types, fixed-width integers, deep
+  recursion without stack overflows, and a differential test of every build against Lean's own compiler.
+- A refusal that names a parameter ("Finance.half, parameter x: ...") lands on its function's line in the Problems
+  panel, like any other.
 - The dashboard and the status bar report the differential test; a disagreement lands in the Problems panel on
   the function it names.
 

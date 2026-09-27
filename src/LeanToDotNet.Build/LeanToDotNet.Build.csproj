@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Nothing to compile: this project packs MSBuild targets and a copy of lean2il, so a C# project can list its
+       Lean projects and have `dotnet build` compile them. See build/LeanToDotNet.Build.targets. -->
+  <PropertyGroup>
+    <PackageId>LeanToDotNet.Build</PackageId>
+    <Description>Compile Lean 4 definitions into your .NET project on every build: runs lake build and lean2il (Tenet re-check, IL, docs, differential test) and references the proven assembly.</Description>
+    <PackageTags>lean;lean4;theorem-prover;formal-verification;msbuild;tenet;dotnet</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <NoWarn>$(NoWarn);NU5100;NU5128</NoWarn>
+    <SuppressDependenciesWhenPacking>false</SuppressDependenciesWhenPacking>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);_PackLean2Il</TargetsForTfmSpecificContentInPackage>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The proven assembly calls into the runtime, so a project using this package gets it too. -->
+    <ProjectReference Include="../LeanToDotNet.Runtime/LeanToDotNet.Runtime.csproj" />
+    <ProjectReference Include="../Lean2Il/Lean2Il.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <None Include="build/**" Pack="true" PackagePath="build/" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <!-- Publish lean2il (framework-dependent, with Tenet and the two reference assemblies beside it) into the package. -->
+  <Target Name="_PackLean2Il">
+    <MSBuild Projects="../Lean2Il/Lean2Il.csproj" Targets="Publish"
+             Properties="Configuration=$(Configuration);PublishDir=$(MSBuildProjectDirectory)/$(IntermediateOutputPath)lean2il/;UseAppHost=false" />
+    <ItemGroup>
+      <_Lean2IlFile Include="$(MSBuildProjectDirectory)/$(IntermediateOutputPath)lean2il/**/*" Exclude="$(MSBuildProjectDirectory)/$(IntermediateOutputPath)lean2il/**/*.pdb" />
+      <TfmSpecificPackageFile Include="@(_Lean2IlFile)" PackagePath="tools/lean2il/%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

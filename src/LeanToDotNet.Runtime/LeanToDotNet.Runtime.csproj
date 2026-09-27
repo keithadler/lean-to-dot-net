@@ -1,6 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Description>The small runtime a lean2il assembly calls into: Lean's Nat and Int arithmetic on BigInteger, and System.Decimal marshaling.</Description>
+    <PackageId>LeanToDotNet.Runtime</PackageId>
+    <Description>The small runtime a lean2il assembly calls into: Lean's Nat and Int on BigInteger, fixed-width integers with Lean's meaning, List, Option and Array, and System.Decimal marshaling.</Description>
     <PackageTags>lean;lean4;formal-verification;biginteger;decimal</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 </Project>

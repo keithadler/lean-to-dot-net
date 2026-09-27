@@ -12,9 +12,11 @@ step "Lean: build the proofs (lake build)"
 step "Tools: restore Tenet (pinned in dotnet-tools.json)"
 dotnet tool restore
 
-step "lean2il: build the compiler, and pack it as a .NET tool into artifacts/"
+step "lean2il: build the compiler; pack it, the runtime and the MSBuild package into artifacts/"
 dotnet build src/Lean2Il -c Release -v quiet -nologo
-dotnet pack src/Lean2Il -c Release -o artifacts -v quiet -nologo
+for p in src/Lean2Il src/LeanToDotNet.Runtime src/LeanToDotNet.Build; do
+  dotnet pack "$p" -c Release -o artifacts -v quiet -nologo
+done
 
 CHECK="--trust-imports"
 if [[ "${1:-}" == "--full" ]]; then CHECK=""; fi   # --full: Tenet re-checks Lean's own library too
@@ -33,6 +35,9 @@ dotnet test tests/LeanToDotNet.Tests -c Release -nologo -v quiet
 
 step "Sample: samples/Invoice"
 dotnet run --project samples/Invoice -c Release
+
+step "Packages: a new project using LeanToDotNet.Build from artifacts/ (tests/package-smoke.sh)"
+tests/package-smoke.sh
 
 if command -v npm >/dev/null; then
   step "VS Code extension: unit tests, then vscode/lean-to-dot-net-*.vsix with lean2il bundled"

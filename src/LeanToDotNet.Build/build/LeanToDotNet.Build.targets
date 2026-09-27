@@ -1,0 +1,63 @@
+<Project>
+  <!--
+    Compile the Lean projects listed as LeanProject items and reference what comes out:
+
+      <ItemGroup>
+        <LeanProject Include="../lean" />
+      </ItemGroup>
+
+    For each one, before the C# compiler runs: `lake build`, then lean2il, which re-checks the proofs with Tenet,
+    emits <Namespace>.Proven.dll with its IntelliSense XML and Markdown docs, replays the proved examples and runs
+    the differential test. The assembly lands in obj/, is referenced, and is copied to the output. Nothing runs
+    again until a .lean file, the lakefile or the toolchain changes.
+
+    Optional metadata on a LeanProject: Assembly, Namespace, Class (lean2il's options of the same names).
+  -->
+
+  <PropertyGroup>
+    <Lean2IlPath Condition="'$(Lean2IlPath)' == ''">$(MSBuildThisFileDirectory)../tools/lean2il/lean2il.dll</Lean2IlPath>
+    <_LeanDotnet>$(DOTNET_HOST_PATH)</_LeanDotnet>
+    <_LeanDotnet Condition="'$(_LeanDotnet)' == ''">dotnet</_LeanDotnet>
+    <_LeanOutRoot>$(MSBuildProjectDirectory)/$(IntermediateOutputPath)lean2il/</_LeanOutRoot>
+    <!-- elan puts lake here; an IDE started from the Dock may not have it on PATH. -->
+    <_LeanPath Condition="'$(OS)' == 'Windows_NT'">$(USERPROFILE)\.elan\bin;$(PATH)</_LeanPath>
+    <_LeanPath Condition="'$(OS)' != 'Windows_NT'">$(HOME)/.elan/bin:$(PATH)</_LeanPath>
+  </PropertyGroup>
+
+  <Target Name="_LeanInputs" Condition="'@(LeanProject)' != ''">
+    <ItemGroup>
+      <_LeanProjectDir Include="@(LeanProject->'%(FullPath)')">
+        <OutDir>$(_LeanOutRoot)%(LeanProject.Filename)%(LeanProject.Extension)/</OutDir>
+        <Flags></Flags>
+      </_LeanProjectDir>
+      <_LeanProjectDir Condition="'%(_LeanProjectDir.Assembly)' != ''"><Flags>%(_LeanProjectDir.Flags) --assembly "%(_LeanProjectDir.Assembly)"</Flags></_LeanProjectDir>
+      <_LeanProjectDir Condition="'%(_LeanProjectDir.Namespace)' != ''"><Flags>%(_LeanProjectDir.Flags) --namespace "%(_LeanProjectDir.Namespace)"</Flags></_LeanProjectDir>
+      <_LeanProjectDir Condition="'%(_LeanProjectDir.Class)' != ''"><Flags>%(_LeanProjectDir.Flags) --class "%(_LeanProjectDir.Class)"</Flags></_LeanProjectDir>
+      <_LeanSource Include="%(_LeanProjectDir.Identity)/**/*.lean;%(_LeanProjectDir.Identity)/lakefile.*;%(_LeanProjectDir.Identity)/lean-toolchain;%(_LeanProjectDir.Identity)/lake-manifest.json"
+                   Exclude="%(_LeanProjectDir.Identity)/.lake/**" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_LeanProjectDir.Identity)/lean-toolchain')"
+           Text="LeanProject %(_LeanProjectDir.Identity) is not a Lake project: it has no lean-toolchain file." />
+  </Target>
+
+  <Target Name="_LeanCompile" DependsOnTargets="_LeanInputs" Condition="'@(LeanProject)' != '' And '$(DesignTimeBuild)' != 'true'"
+          Inputs="@(_LeanSource);$(Lean2IlPath);$(MSBuildProjectFullPath)" Outputs="$(_LeanOutRoot)stamp">
+    <Exec Condition="'$(LeanLakeBuild)' == 'true'" Command="lake build" WorkingDirectory="%(_LeanProjectDir.Identity)"
+          EnvironmentVariables="PATH=$(_LeanPath)" CustomErrorRegularExpression="error:" />
+    <PropertyGroup>
+      <_LeanFlags>--fuzz $(LeanFuzz)</_LeanFlags>
+      <_LeanFlags Condition="'$(LeanCheckImports)' != 'true'">$(_LeanFlags) --trust-imports</_LeanFlags>
+    </PropertyGroup>
+    <RemoveDir Directories="%(_LeanProjectDir.OutDir)" />
+    <Exec Command="&quot;$(_LeanDotnet)&quot; exec &quot;$(Lean2IlPath)&quot; &quot;%(_LeanProjectDir.Identity)&quot; --out &quot;%(_LeanProjectDir.OutDir).&quot; $(_LeanFlags)%(_LeanProjectDir.Flags)"
+          EnvironmentVariables="PATH=$(_LeanPath)" />
+    <Touch Files="$(_LeanOutRoot)stamp" AlwaysCreate="true" />
+  </Target>
+
+  <Target Name="LeanCompile" DependsOnTargets="_LeanCompile" BeforeTargets="ResolveAssemblyReferences" Condition="'@(LeanProject)' != ''">
+    <ItemGroup>
+      <_LeanAssembly Include="$(_LeanOutRoot)*/*.dll" Exclude="$(_LeanOutRoot)*/LeanToDotNet.Runtime.dll" />
+      <Reference Include="@(_LeanAssembly)" Private="true" />
+    </ItemGroup>
+  </Target>
+</Project>
