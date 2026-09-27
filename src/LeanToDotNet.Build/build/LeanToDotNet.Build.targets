@@ -22,6 +22,8 @@
     <!-- elan puts lake here; an IDE started from the Dock may not have it on PATH. -->
     <_LeanPath Condition="'$(OS)' == 'Windows_NT'">$(USERPROFILE)\.elan\bin;$(PATH)</_LeanPath>
     <_LeanPath Condition="'$(OS)' != 'Windows_NT'">$(HOME)/.elan/bin:$(PATH)</_LeanPath>
+    <!-- EnvironmentVariables is a ;-separated list, and a Windows PATH is full of ;. -->
+    <_LeanEnv>PATH=$([MSBuild]::Escape($(_LeanPath)))</_LeanEnv>
   </PropertyGroup>
 
   <Target Name="_LeanInputs" Condition="'@(LeanProject)' != ''">
@@ -43,14 +45,14 @@
   <Target Name="_LeanCompile" DependsOnTargets="_LeanInputs" Condition="'@(LeanProject)' != '' And '$(DesignTimeBuild)' != 'true'"
           Inputs="@(_LeanSource);$(Lean2IlPath);$(MSBuildProjectFullPath)" Outputs="$(_LeanOutRoot)stamp">
     <Exec Condition="'$(LeanLakeBuild)' == 'true'" Command="lake build" WorkingDirectory="%(_LeanProjectDir.Identity)"
-          EnvironmentVariables="PATH=$(_LeanPath)" CustomErrorRegularExpression="error:" />
+          EnvironmentVariables="$(_LeanEnv)" CustomErrorRegularExpression="error:" />
     <PropertyGroup>
       <_LeanFlags>--fuzz $(LeanFuzz)</_LeanFlags>
       <_LeanFlags Condition="'$(LeanCheckImports)' != 'true'">$(_LeanFlags) --trust-imports</_LeanFlags>
     </PropertyGroup>
     <RemoveDir Directories="%(_LeanProjectDir.OutDir)" />
     <Exec Command="&quot;$(_LeanDotnet)&quot; exec &quot;$(Lean2IlPath)&quot; &quot;%(_LeanProjectDir.Identity)&quot; --out &quot;%(_LeanProjectDir.OutDir).&quot; $(_LeanFlags)%(_LeanProjectDir.Flags)"
-          EnvironmentVariables="PATH=$(_LeanPath)" />
+          EnvironmentVariables="$(_LeanEnv)" />
     <Touch Files="$(_LeanOutRoot)stamp" AlwaysCreate="true" />
   </Target>
 
