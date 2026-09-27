@@ -5,6 +5,7 @@
 [![Lean 4.33.1](https://img.shields.io/badge/Lean-4.33.1-blue)](lean/lean-toolchain)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512bd4)](global.json)
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/keithadler.lean-to-dot-net?label=VS%20Code)](https://marketplace.visualstudio.com/items?itemName=keithadler.lean-to-dot-net)
+[![Open VSX](https://img.shields.io/open-vsx/v/keithadler/lean-to-dot-net?label=Open%20VSX)](https://open-vsx.org/extension/keithadler/lean-to-dot-net)
 
 **Prove a function in Lean 4, call it from C#.** `lean2il` reads the compiled Lean with
 [Tenet](https://github.com/keithadler/tenet), an independent Lean kernel on .NET, re-checks every proof,
@@ -173,7 +174,10 @@ either if it is missing.
 code --install-extension keithadler.lean-to-dot-net
 ```
 
-Then open a Lean project in VS Code, mark a definition `@[export]`, and run **Lean to .NET: Build .NET Assembly**.
+Using Cursor, Windsurf or VSCodium? It's on [Open VSX](https://open-vsx.org/extension/keithadler/lean-to-dot-net)
+too: search "Lean to .NET" in their Extensions view.
+
+Then open a Lean project, mark a definition `@[export]`, and run **Lean to .NET: Build .NET Assembly**.
 The VSIX is also attached to each [release](https://github.com/keithadler/lean-to-dot-net/releases/latest).
 
 **From source**, for the command line, the tests and the demo:

@@ -39,7 +39,7 @@ Lean project's declarations, also built on Tenet. The generated docs can link ea
 | Tenet (the library) | nothing | `lean2il` references `Tenet.Olean` 0.11.1 from nuget.org; `dotnet` restores it. |
 | Tenet (the `tenet` command) | `dotnet tool restore` | Pinned in [`dotnet-tools.json`](../dotnet-tools.json). Use it to re-check or audit a project on its own: `dotnet tenet check lean --all`. |
 | lean2il (the command) | `./setup.sh`, or `dotnet tool update -g lean2il --add-source ./artifacts` after `./build.sh` | A .NET global tool in `~/.dotnet/tools`. |
-| The VS Code extension | the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=keithadler.lean-to-dot-net), or `code --install-extension keithadler.lean-to-dot-net` | It bundles lean2il and Tenet: with it, you need only the .NET 10 runtime and Lean. |
+| The VS Code extension | the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=keithadler.lean-to-dot-net) or, for Cursor, Windsurf and VSCodium, [Open VSX](https://open-vsx.org/extension/keithadler/lean-to-dot-net); or `code --install-extension keithadler.lean-to-dot-net` | It bundles lean2il and Tenet: with it, you need only the .NET 10 runtime and Lean. |
 
 On Windows, `setup.ps1` does the same as `setup.sh`.
 
