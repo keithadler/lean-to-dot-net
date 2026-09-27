@@ -1,12 +1,17 @@
 # Changelog
 
-## 0.4.0
+## 0.4.1
 
-- Bundles lean2il 0.3.0: recursive definitions (compiled from the equation lemmas Lean proves for them), lists,
-  options, strings and arrays, lambdas that use local variables, your own data types, fixed-width integers, deep
-  recursion without stack overflows, and a differential test of every build against Lean's own compiler.
+- Bundles lean2il 0.3.0 as released: arrays, `UInt8` to `Int64`, lambdas that use local variables, your own data
+  types (trees, syntax, results, types with parameters), and honest refusals for `Float` and `Char`.
 - A refusal that names a parameter ("Finance.half, parameter x: ...") lands on its function's line in the Problems
   panel, like any other.
+
+## 0.4.0
+
+- Bundles lean2il with recursive definitions (compiled from the equation lemmas Lean proves for them), lists,
+  options and strings, deep recursion without stack overflows, and a differential test of every build against
+  Lean's own compiler.
 - The dashboard and the status bar report the differential test; a disagreement lands in the Problems panel on
   the function it names.
 
