@@ -12,8 +12,9 @@ step "Lean: build the proofs (lake build)"
 step "Tools: restore Tenet (pinned in dotnet-tools.json)"
 dotnet tool restore
 
-step "lean2il: build the compiler"
+step "lean2il: build the compiler, and pack it as a .NET tool into artifacts/"
 dotnet build src/Lean2Il -c Release -v quiet -nologo
+dotnet pack src/Lean2Il -c Release -o artifacts -v quiet -nologo
 
 CHECK="--trust-imports"
 if [[ "${1:-}" == "--full" ]]; then CHECK=""; fi   # --full: Tenet re-checks Lean's own library too

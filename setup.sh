@@ -35,4 +35,16 @@ fi
 say "Lean:   $(cd lean && lean --version)"
 say ".NET:   $(dotnet --version)"
 ./build.sh "$@"
-say "Done. lean2il is at src/Lean2Il/bin/Release/net10.0/lean2il.dll; the VSIX is in vscode/."
+
+say "Installing the lean2il command (a .NET global tool, in ~/.dotnet/tools)"
+# Reinstall rather than update: a rebuilt package keeps its version number, and NuGet would reuse its cached copy.
+dotnet tool uninstall --global lean2il >/dev/null 2>&1 || true
+rm -rf "${NUGET_PACKAGES:-$HOME/.nuget/packages}/lean2il"
+dotnet tool install --global lean2il --add-source ./artifacts >/dev/null
+case ":$PATH:" in *":$HOME/.dotnet/tools:"*) ;; *) say "Add ~/.dotnet/tools to your PATH to run lean2il from anywhere.";; esac
+
+if command -v code >/dev/null; then
+  say "Installing the VS Code extension"
+  code --install-extension vscode/lean-to-dot-net-*.vsix --force >/dev/null 2>&1 || true
+fi
+say "Done. Try: lean2il lean   (or open this folder in VS Code and run 'Lean to .NET: Build .NET Assembly')"

@@ -43,6 +43,10 @@ internal static class Program
         catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException or ArgumentException)
         {
             Console.Error.WriteLine("lean2il: " + e.Message);
+            if (e is FileNotFoundException && e.Message.Contains("cannot find module", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine("  The .olean files may be stale: run `lake build` in the project and try again.");
+            }
             return 2;
         }
     }
@@ -158,7 +162,7 @@ internal static class Program
         string dll = Path.Combine(outDir, asmName + ".dll");
         pab.Save(dll);
         File.Copy(runtimePath, Path.Combine(outDir, Path.GetFileName(runtimePath)), overwrite: true);
-        Console.WriteLine($"emitted {dll}: {declared.Count} functions in {compiler.ClassName}, for {clr.TargetFramework}");
+        Console.WriteLine($"emitted {dll}: {Plural(declared.Count, "function")} in {compiler.ClassName}, for {clr.TargetFramework}");
         foreach (Export e in declared)
         {
             Console.WriteLine($"  {compiler.ClassName}.{e.ClrName}  <-  {e.Name}{(e.HasDecimalForm ? "  (with a decimal overload)" : "")}");
@@ -167,10 +171,12 @@ internal static class Program
         // 4. Documentation from the Lean, and a replay of every proved example against the IL.
         int replayed = docs.Replay(dll);
         docs.Write(outDir);
-        Console.WriteLine($"docs: {asmName}.xml (IntelliSense), {asmName}.md (how to call it), {asmName}.proof.json; {docs.TheoremCount} theorems, {replayed} proved examples replayed against the IL, all equal");
+        Console.WriteLine($"docs: {asmName}.xml (IntelliSense), {asmName}.md (how to call it), {asmName}.proof.json; {Plural(docs.TheoremCount, "theorem")}, {Plural(replayed, "proved example")} replayed against the IL{(replayed > 0 ? ", all equal" : "")}");
         Console.WriteLine($"done in {total.Elapsed.TotalSeconds:F1}s");
         return 0;
     }
+
+    private static string Plural(int n, string word) => $"{n:N0} {word}{(n == 1 ? "" : "s")}";
 
     /// <summary>The longest namespace every export shares, e.g. <c>Finance</c> for <c>Finance.round</c> and <c>Finance.roundCents</c>.</summary>
     private static string CommonNamespace(List<Name> names)

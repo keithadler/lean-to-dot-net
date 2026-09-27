@@ -1,0 +1,29 @@
+{
+  "Exported function for .NET": {
+    "prefix": ["export", "dotnet"],
+    "description": "A definition lean2il compiles to a .NET method, with the docstring that becomes its IntelliSense summary",
+    "body": [
+      "/-- ${3:What this computes. This docstring becomes the .NET method's summary.} -/",
+      "@[export ${1/(.*)/${1:/downcase}/}]",
+      "def ${1:myFunction} (${2:x : Int}) : ${4:Int} :=",
+      "  ${0:x}"
+    ]
+  },
+  "Documented theorem for .NET": {
+    "prefix": ["theorem-doc", "proved"],
+    "description": "A theorem with a docstring: it appears in the .NET docs of every exported function it mentions",
+    "body": [
+      "/-- ${2:What this guarantees, in words a C# caller will read.} -/",
+      "theorem ${1:name} : ${3:statement} := by",
+      "  ${0:sorry}"
+    ]
+  },
+  "Proved example for .NET": {
+    "prefix": ["example-doc", "proved-example"],
+    "description": "`f args = result` with literal arguments: lean2il turns it into a C# example and runs it against the IL",
+    "body": [
+      "/-- ${2:What the example shows.} -/",
+      "theorem ${1:name_example} : ${3:f 1 2} = ${4:3} := by decide"
+    ]
+  }
+}

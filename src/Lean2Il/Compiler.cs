@@ -568,6 +568,25 @@ internal sealed class Compiler
             }
         }
 
+        /// <summary>
+        /// The constants Lean's equation compiler leaves in a recursive definition's kernel term: <c>brecOn</c> for
+        /// structural recursion, <c>WellFounded.fix</c> for well-founded recursion. Seeing one is the honest
+        /// moment to stop, before the unfolding reaches the <c>PProd</c> tables they are built from.
+        /// </summary>
+        private static string? RecursionMarker(Name n)
+        {
+            string s = n.ToString();
+            if (s.EndsWith(".brecOn", StringComparison.Ordinal) || s.EndsWith(".binductionOn", StringComparison.Ordinal))
+            {
+                return "structural recursion (" + s + ")";
+            }
+            if (s is "WellFounded.fix" or "WellFounded.fixF" || s.EndsWith("._unary", StringComparison.Ordinal))
+            {
+                return "well-founded recursion (" + s + ")";
+            }
+            return null;
+        }
+
         private bool IsCtorApp(Expr e, out ConstructorInfo? ctor, out Expr[] args)
         {
             Expr f = e.GetAppArgs(out args);
@@ -609,6 +628,10 @@ internal sealed class Compiler
                 ConstantInfo? info = _c.Resolve(c.Name);
                 if (info is DefinitionInfo d)
                 {
+                    if (RecursionMarker(c.Name) is string how)
+                    {
+                        throw new CompileError($"it is defined by {how}, which lean2il does not compile yet");
+                    }
                     if (d.Safety != DefinitionSafety.Safe)
                     {
                         throw new CompileError($"{c.Name} is partial or unsafe; lean2il compiles only what the kernel checked");

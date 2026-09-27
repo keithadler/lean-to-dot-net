@@ -14,6 +14,28 @@ the IL before it is written down.
 
 ![A C# call to Proven.Round with its hover: both signatures, the Lean docstring, and proved examples replayed on the IL](docs/images/vscode-csharp-hover.png)
 
+**Start here:** the [tutorial](docs/tutorial.md) takes you from nothing to a proved Lean function called from
+C# in about fifteen minutes. The [guide](docs/guide.md) covers every option, what compiles, how Lean types map to
+.NET, how the docs are chosen, and what each error means.
+
+## The pieces, in plain terms
+
+- **[Lean 4](https://lean-lang.org)** is a programming language that is also a proof assistant. You write a
+  function, you write theorems about it (*this never returns more than that*, *this is symmetric*), and Lean
+  checks every step of every proof. The checking is done by Lean's *kernel*, a small program that everything
+  else rests on.
+- **[Tenet](https://github.com/keithadler/tenet)** is a second, independent implementation of that kernel,
+  written in C# on .NET from the type theory, sharing no code with Lean. It re-checks every declaration of a
+  compiled Lean project from scratch; it re-checks all of Mathlib, and it rejects a corpus of deliberately
+  broken files, which is how you know it is checking rather than agreeing. A proof two independent kernels
+  accept is one you can trust a little more.
+- **lean2il**, this repository's compiler, asks Tenet to re-check the project, refuses to go on if Tenet rejects
+  anything, then compiles the definitions you mark to .NET IL and writes their documentation from the Lean.
+- **The VS Code extension** shows, wherever you are in Lean or C#, what was proved about the code in front of
+  you, and builds the assembly for you.
+- **[LeanViz](https://github.com/keithadler/leanviz)** renders the project's theorems as browsable pages; the
+  generated docs link to them.
+
 The demo is money. .NET's `Math.Round` has three well-known traps in finance code, and this repository
 replaces all three with one function proved in Lean:
 
@@ -114,16 +136,24 @@ page. Lean's other documentation tools fit around this rather than inside it:
 
 ## The VS Code extension
 
-`vscode/` builds `lean-to-dot-net-0.1.0.vsix`: CodeLens and hovers in Lean and in C#, Tenet's verdict in the
-status bar, and a **Build .NET Assembly** command that runs `lake build` and `lean2il`.
+`vscode/` builds `lean-to-dot-net-0.2.0.vsix` (`./setup.sh` installs it):
 
-![In Lean, a CodeLens over each exported definition: its C# signature, its theorems, its replayed examples](docs/images/vscode-lean-lens.png)
+- **In C#**, every call to a compiled function carries a lens, *proved in Lean, re-checked by Tenet*, that opens
+  the Lean definition, and a hover with the signatures, the docstring, the proved examples and the theorems.
+  `Proven.` completes with what is proved about each method.
+- **In Lean**, a lens over each `@[export]` definition shows the C# signature and what stands behind it; over a
+  proved example, the call and the value it returned on the IL.
+- **The Proofs view** in the Activity Bar lists every assembly, function, replayed example and theorem, and
+  **the Proof Dashboard** puts them on one page with the statements and the axioms under each.
+- **Build .NET Assembly** runs `lake build` and `lean2il` in a terminal; Lean errors, lean2il's refusals and
+  Tenet rejections go to the Problems panel on the right line. Optionally on every save.
+- A **walkthrough** on the Welcome page, and Lean **snippets** for an exported definition and a proved example.
 
-![The generated API docs beside the Lean they came from](docs/images/vscode-api-docs.png)
+![The Proofs view and the Proof Dashboard](docs/images/vscode-dashboard.png)
 
-```bash
-code --install-extension vscode/lean-to-dot-net-0.1.0.vsix
-```
+![In Lean, lenses over each exported definition](docs/images/vscode-lean-lens.png)
+
+![A refusal in the Problems panel, on the line it is about](docs/images/vscode-diagnostics.png)
 
 ## Getting started
 
@@ -141,7 +171,9 @@ version manager, which then fetches the exact Lean in `lean/lean-toolchain`) and
 the same. Once set up, `./build.sh` rebuilds and retests everything, and `./build.sh --full` has Tenet
 re-check Lean's own library too.
 
-To use it in your own Lean project, mark what to compile and run `lean2il` on the project:
+`setup.sh` also installs `lean2il` as a .NET global tool (in `~/.dotnet/tools`) and the VS Code extension.
+To use it in your own Lean project, mark what to compile and run `lean2il` on the project (the
+[tutorial](docs/tutorial.md) walks through this end to end):
 
 ```lean
 /-- What the .NET docs will say about it. -/
@@ -151,10 +183,10 @@ def myFunction (x : Int) (n : Nat) : Int := ...
 
 ```bash
 lake build
-dotnet src/Lean2Il/bin/Release/net10.0/lean2il.dll path/to/your/project --out out/
+lean2il .
 ```
 
-and reference `out/<Namespace>.Proven.dll` and `out/LeanToDotNet.Runtime.dll` from C#.
+and reference `.lake/dotnet/<Namespace>.Proven.dll` and `.lake/dotnet/LeanToDotNet.Runtime.dll` from C#.
 
 ## What the compiler supports
 
@@ -182,7 +214,7 @@ function values, strings, `Float`, and inductive types with parameters, indices 
 | [`tests/`](tests) | runtime against Lean, `Proven.Round` against `Math.Round(decimal)`, the three bugs |
 | [`samples/Invoice/`](samples/Invoice) | a console app: the three bugs next to the proved fix |
 | [`vscode/`](vscode) | the VS Code extension |
-| [`docs/`](docs) | the generated API docs, the LeanViz site, screenshots |
+| [`docs/`](docs) | [tutorial](docs/tutorial.md), [guide](docs/guide.md), the [generated API docs](docs/Finance.Proven.md), the LeanViz site |
 
 ## License
 

@@ -23,6 +23,12 @@ if (-not ($sdks -match '^10\.')) {
 Push-Location lean; lake build; Pop-Location
 dotnet tool restore
 dotnet build src/Lean2Il -c Release -nologo
+dotnet pack src/Lean2Il -c Release -o artifacts -nologo
+dotnet tool uninstall --global lean2il 2>$null
+Remove-Item -Recurse -Force "$HOME\.nuget\packages\lean2il" -ErrorAction SilentlyContinue
+dotnet tool install --global lean2il --add-source ./artifacts
 dotnet src/Lean2Il/bin/Release/net10.0/lean2il.dll lean --trust-imports
 dotnet test tests/LeanToDotNet.Tests -c Release -nologo
 dotnet run --project samples/Invoice -c Release
+$vsix = Get-ChildItem vscode/*.vsix -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($vsix -and (Get-Command code -ErrorAction SilentlyContinue)) { code --install-extension $vsix.FullName --force }
