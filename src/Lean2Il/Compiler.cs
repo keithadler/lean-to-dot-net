@@ -22,6 +22,33 @@ internal sealed class Export
     public required MethodBuilder Raw { get; init; }
     public MethodBuilder? DecimalOverload { get; set; }
 
+    /// <summary>
+    /// For an export: the internal method holding its body. The public method checks its arguments, calls this,
+    /// and reruns it on a big stack if the recursion under it runs out of room. Calls between compiled functions go
+    /// straight here. Null for a helper, whose body is in <see cref="Raw"/>.
+    /// </summary>
+    public MethodBuilder? Impl { get; init; }
+
+    public MethodBuilder Target => Impl ?? Raw;
+
+    /// <summary>False for a recursive helper compiled because an export needs it: an internal method, no docs.</summary>
+    public bool IsPublic { get; init; } = true;
+
+    /// <summary>The universe levels this copy is instantiated at.</summary>
+    public Level[] Levels { get; init; } = [];
+
+    /// <summary>
+    /// For a helper with type or instance parameters: the arguments this copy is specialized to, one per parameter
+    /// that is neither data nor a proof (null in the other positions). A helper used at two types is two methods.
+    /// </summary>
+    public Expr?[]? Fixed { get; init; }
+
+    /// <summary>
+    /// For a recursive definition: the statement of its equation lemma, <c>∀ xs, f xs = rhs</c>, proved by Lean and
+    /// re-checked by Tenet. The method's body is compiled from <c>rhs</c>, where the recursive calls are ordinary calls.
+    /// </summary>
+    public Expr? Equation { get; init; }
+
     /// <summary>Whether the decimal overload exists: some parameter or the result is a decimal-shaped structure.</summary>
     public bool HasDecimalForm => Params.Any(p => p.Repr.Layout?.DecimalShaped == true) || Result.Layout?.DecimalShaped == true;
 }
@@ -37,8 +64,14 @@ internal sealed class Export
 /// function or a recursor, reduce a recursor whose target is a known constructor, and turn the recursors left over
 /// into branches. Types and proofs are erased; <c>Decidable</c> keeps its answer and loses its proof.
 ///
-/// What it does not do yet, and says so rather than miscompiling: recursion (structural or well-founded), function
-/// values, and inductive types with parameters, indices or recursive fields.
+/// Recursion is compiled from equations, not from recursors. Lean elaborates a recursive definition into a term built
+/// on <c>brecOn</c> or <c>WellFounded.fix</c>, which says nothing a machine can run efficiently; but it can prove, for
+/// every recursive <c>f</c>, the equation <c>f.eq_def : ∀ xs, f xs = rhs</c>, where <c>rhs</c> is the body as written,
+/// calling <c>f</c> directly. The build asks Lean for those equations, Tenet re-checks their proofs, and each method's
+/// body is compiled from its <c>rhs</c>. So the IL computes something both kernels agree is equal to <c>f</c>.
+///
+/// What it does not do yet, and says so rather than miscompiling: function values, and inductive types with
+/// parameters, indices or recursive fields beyond the built-in ones.
 /// </summary>
 internal sealed class Compiler
 {
@@ -50,6 +83,10 @@ internal sealed class Compiler
     private readonly Dictionary<Name, Layout?> _layouts = new();
     private readonly Dictionary<Name, string> _layoutFailures = new();
     private readonly Dictionary<Name, Export> _exports = new();
+    /// <summary>Every compiled function, keyed by name and specialization: the exports and the helpers they need.</summary>
+    private readonly Dictionary<string, Export> _functions = new();
+    private readonly Queue<Export> _pending = new();
+    private readonly IReadOnlyDictionary<Name, Expr> _equations;
     private readonly string _namespace;
     private readonly TypeBuilder _class;
     private readonly MethodInfo _bigFromLong;
@@ -63,9 +100,11 @@ internal sealed class Compiler
 
     private readonly HashSet<Name> _own;
 
-    public Compiler(OleanChecker loader, Environment env, Clr clr, ModuleBuilder module, string ns, string className, HashSet<Name> own)
+    public Compiler(OleanChecker loader, Environment env, Clr clr, ModuleBuilder module, string ns, string className, HashSet<Name> own,
+        IReadOnlyDictionary<Name, Expr> equations)
     {
         _own = own;
+        _equations = equations;
         _loader = loader;
         _env = env;
         _clr = clr;
@@ -85,8 +124,12 @@ internal sealed class Compiler
     /// <summary><c>roundCents</c> to <c>RoundCents</c>, <c>to_even</c> to <c>ToEven</c>.</summary>
     public static string Pascal(string s)
     {
-        var parts = s.Trim('«', '»').Split('_', StringSplitOptions.RemoveEmptyEntries);
-        return string.Concat(parts.Select(p => char.ToUpperInvariant(p[0]) + p[1..]));
+        // Lean allows ' ? ! in names (gcd', isEmpty?, get!); .NET does not.
+        s = s.Trim('«', '»').Replace("'", "_prime").Replace("?", "_opt").Replace("!", "_bang");
+        s = new string(s.Select(ch => char.IsLetterOrDigit(ch) || ch == '_' ? ch : '_').ToArray());
+        var parts = s.Split('_', StringSplitOptions.RemoveEmptyEntries);
+        string r = string.Concat(parts.Select(p => char.ToUpperInvariant(p[0]) + p[1..]));
+        return r.Length > 0 && char.IsDigit(r[0]) ? "_" + r : r;
     }
 
     private static string[] Components(Name n)
@@ -139,6 +182,19 @@ internal sealed class Compiler
                 case "Int": return new Repr(Kind.Int, _clr.BigInteger);
                 case "Bool": return new Repr(Kind.Bool, _clr.Bool);
                 case "Decidable": return new Repr(Kind.Bool, _clr.Bool);
+                case "String": return new Repr(Kind.String, _clr.String);
+                case "List" or "Option":
+                {
+                    w.GetAppArgs(out Expr[] targs);
+                    Repr elem = targs.Length == 1 ? ReprOf(targs[0], tc) : Repr.Erased;
+                    if (!elem.IsData)
+                    {
+                        return new Repr(Kind.Unsupported, Why: $"a {c.Name} of {targs.FirstOrDefault()} has no run-time form: {elem.Why ?? "its elements are not data"}");
+                    }
+                    Kind k = c.Name.ToString() == "List" ? Kind.List : Kind.Option;
+                    Type generic = k == Kind.List ? _clr.LeanList : _clr.LeanOption;
+                    return new Repr(k, generic.MakeGenericType(elem.ClrType), Elem: elem);
+                }
             }
             if (Resolve(c.Name) is InductiveInfo ind)
             {
@@ -271,6 +327,143 @@ internal sealed class Compiler
     /// <summary>The layout already made for an inductive, if it became a .NET type.</summary>
     internal Layout? LayoutOf(Name n) => _layouts.GetValueOrDefault(n);
 
+    /// <summary>Lean marks every recursive definition by also emitting <c>f._unsafe_rec</c>, the version its own compiler runs.</summary>
+    internal bool IsRecursive(Name n) => Resolve(Name.Parse(n + "._unsafe_rec")) is not null;
+
+    /// <summary>The recursive definitions an export reaches, whose equation lemmas the build has to ask Lean for.</summary>
+    public HashSet<Name> RecursiveReachableFrom(IEnumerable<Name> roots)
+    {
+        var found = new HashSet<Name>();
+        var seen = new HashSet<Name>();
+        var stack = new Stack<Name>(roots);
+        while (stack.Count > 0)
+        {
+            Name n = stack.Pop();
+            if (!seen.Add(n) || _prims.ContainsKey(n))
+            {
+                continue;
+            }
+            string sn = n.ToString();
+            if (sn.EndsWith("._unsafe_rec", StringComparison.Ordinal) || sn.EndsWith("._sunfold", StringComparison.Ordinal)
+                || sn.EndsWith(".brecOn", StringComparison.Ordinal) || sn.EndsWith(".below", StringComparison.Ordinal))
+            {
+                continue;
+            }
+            if (Resolve(n) is not DefinitionInfo d)
+            {
+                continue;
+            }
+            if (IsRecursive(n))
+            {
+                found.Add(n);
+            }
+            ExprOps.ForEach(d.Value!, (x, _) =>
+            {
+                if (x is ConstExpr c)
+                {
+                    stack.Push(c.Name);
+                }
+                return true;
+            });
+        }
+        return found;
+    }
+
+    /// <summary>
+    /// The method for a recursive helper at these arguments, declared the first time it is needed. Data arguments
+    /// are parameters; type and instance arguments are fixed into the copy, so they must not mention local
+    /// variables; proofs are erased.
+    /// </summary>
+    internal Export Helper(ConstExpr c, Expr[] args)
+    {
+        if (System.Environment.GetEnvironmentVariable("LEAN2IL_TRACE") is not null)
+        {
+            Console.Error.WriteLine($"trace: helper {c.Name} (equation: {_equations.ContainsKey(c.Name)}, recursive: {IsRecursive(c.Name)})");
+        }
+        if (Resolve(c.Name) is not DefinitionInfo def)
+        {
+            throw new CompileError($"internal: {c.Name} is not a definition");
+        }
+        if (!_equations.TryGetValue(c.Name, out Expr? equation))
+        {
+            throw new CompileError($"{c.Name} is recursive and Lean gave no equation lemma for it, so it cannot be compiled");
+        }
+        var tc = new TypeChecker(_env);
+        var ps = new List<Param>();
+        var fixedArgs = new Expr?[args.Length];
+        Expr t = def.InstantiateTypeLevelParams(c.Levels);
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (tc.Whnf(t) is not PiExpr p)
+            {
+                throw new CompileError($"{c.Name} is applied to more arguments than it takes");
+            }
+            Repr r = ReprOf(p.Domain, tc);
+            Expr bound;
+            if (r.IsData)
+            {
+                bound = tc.Lctx.MkLocalDecl(p.BinderName, p.Domain, p.Info);
+            }
+            else if (tc.IsProp(p.Domain))
+            {
+                bound = tc.Lctx.MkLocalDecl(p.BinderName, p.Domain, p.Info);
+            }
+            else
+            {
+                // A type, an instance, or a function argument: the copy is specialized to it, as a C++ template would
+                // be. So List.foldr (· + ·) 0 compiles, with the addition inlined; a lambda that captures a local
+                // variable does not, yet.
+                if (args[i].HasFVar)
+                {
+                    throw new CompileError(r.Kind == Kind.Unsupported && r.Why?.StartsWith("a function value", StringComparison.Ordinal) == true
+                        ? $"{c.Name} is passed a function that uses local variables; lean2il compiles function arguments only when they are closed (use no local variables)"
+                        : $"{c.Name} is used at a type or instance that depends on a local value, which is not compiled yet");
+                }
+                fixedArgs[i] = args[i];
+                bound = args[i];
+            }
+            ps.Add(new Param(p.BinderName, p.BinderName.LastString ?? "arg", r.IsData ? r : Repr.Erased));
+            t = ExprOps.Instantiate1(p.Body, bound);
+        }
+        if (tc.Whnf(t) is PiExpr)
+        {
+            throw new CompileError($"{c.Name} is partially applied; a function value would be needed at run time");
+        }
+        Repr result = ReprOf(t, tc);
+        if (!result.IsData)
+        {
+            throw new CompileError($"{c.Name}: {result.Why ?? "its result is not data"}");
+        }
+        string key = c.Name + "|" + string.Join(",", c.Levels.Select(l => l.ToString())) + "|" + string.Join(",", fixedArgs.Select(a => a?.ToString() ?? "_"));
+        if (_functions.TryGetValue(key, out Export? known))
+        {
+            return known;
+        }
+        var runtime = ps.Where(p => p.Repr.IsData).ToArray();
+        string clrName = "Rec" + string.Concat(c.Name.ToString().Split('.').Select(Pascal)) + (_functions.Count(kv => kv.Value.Name.Equals(c.Name)) is int k && k > 0 ? "_" + k : "");
+        MethodBuilder mb = _class.DefineMethod(clrName, MethodAttributes.Assembly | MethodAttributes.Static,
+            result.ClrType, runtime.Select(p => p.Repr.ClrType).ToArray());
+        var e = new Export
+        {
+            Name = c.Name, Info = def, ClrName = clrName, Params = ps, Result = result, Raw = mb,
+            IsPublic = false, Levels = c.Levels, Fixed = fixedArgs, Equation = ExprOps.InstantiateLevelParams(equation, def.LevelParams, c.Levels),
+        };
+        _functions[key] = e;
+        _pending.Enqueue(e);
+        return e;
+    }
+
+    private static bool IsInstanceLike(Expr type, TypeChecker tc) => tc.Whnf(type) is not PiExpr;
+
+    /// <summary>Compile the helpers the compiled bodies have asked for, until none are left.</summary>
+    public void CompilePending()
+    {
+        while (_pending.Count > 0)
+        {
+            CompileBody(_pending.Dequeue());
+        }
+    }
+
     // ------------------------------------------------------------------ signatures
 
     /// <summary>Declare the .NET method for an exported definition. Bodies come later, so exports can call each other.</summary>
@@ -309,8 +502,17 @@ internal sealed class Compiler
         {
             mb.DefineParameter(i + 1, ParameterAttributes.None, runtime[i].ClrName);
         }
-        var e = new Export { Name = name, Info = def, ClrName = MethodName(name), Params = ps, Result = result, Raw = mb };
+        MethodBuilder impl = _class.DefineMethod(MethodName(name) + "_Impl", MethodAttributes.Assembly | MethodAttributes.Static,
+            result.ClrType, runtime.Select(p => p.Repr.ClrType).ToArray());
+        var e = new Export
+        {
+            Name = name, Info = def, ClrName = MethodName(name), Params = ps, Result = result, Raw = mb, Impl = impl,
+            Equation = IsRecursive(name)
+                ? _equations.GetValueOrDefault(name) ?? throw new CompileError($"{name} is recursive and Lean gave no equation lemma for it, so it cannot be compiled")
+                : null,
+        };
         _exports[name] = e;
+        _functions[name + "||"] = e;
         return e;
     }
 
@@ -318,40 +520,42 @@ internal sealed class Compiler
 
     public void CompileBody(Export e)
     {
-        var body = new Body(this, e.Raw.GetILGenerator());
+        var body = new Body(this, e.Target.GetILGenerator()) { Self = e };
+        if (e.Equation is not null)
+        {
+            // A recursive function: make sure a few more frames fit before taking one (see LeanStack).
+            body.Il.Emit(OpCodes.Call, _clr.Static(_clr.LeanStack, "Check"));
+        }
         var tc = body.Tc;
-        Expr v = e.Info.Value!;
-        Expr t = e.Info.Type;
+        Expr t = e.Info.InstantiateTypeLevelParams(e.Levels);
         var fvars = new List<Expr>();
         int arg = 0;
-        foreach (Param p in e.Params)
+        for (int i = 0; i < e.Params.Count; i++)
         {
+            Param p = e.Params[i];
             var pi = (PiExpr)tc.Whnf(t);
-            Expr fv = tc.Lctx.MkLocalDecl(pi.BinderName, pi.Domain, pi.Info);
-            fvars.Add(fv);
-            t = ExprOps.Instantiate1(pi.Body, fv);
+            Expr bound = e.Fixed?[i] ?? tc.Lctx.MkLocalDecl(pi.BinderName, pi.Domain, pi.Info);
+            fvars.Add(bound);
+            t = ExprOps.Instantiate1(pi.Body, bound);
+            if (e.Fixed?[i] is not null)
+            {
+                continue;
+            }
             if (p.Repr.IsData)
             {
-                body.Bind(fv, new Slot.Arg(arg, p.Repr));
-                if (p.Repr.Kind == Kind.Nat)
-                {
-                    // .NET has no unsigned BigInteger: refuse a negative Nat at the door.
-                    body.Il.Emit(OpCodes.Ldarg, arg);
-                    body.Il.Emit(OpCodes.Ldstr, p.ClrName);
-                    body.Il.Emit(OpCodes.Call, _natCheck);
-                    body.Il.Emit(OpCodes.Starg, arg);
-                }
+                body.Bind(bound, new Slot.Arg(arg, p.Repr));
                 arg++;
             }
             else
             {
-                body.Bind(fv, Slot.Erased.Instance);
+                body.Bind(bound, Slot.Erased.Instance);
             }
         }
-        Expr app = Expr.MkApp(v, fvars);
+        Expr app = e.Equation is Expr eq ? EquationRhs(eq, fvars, e.Name) : Expr.MkApp(e.Info.InstantiateValueLevelParams(e.Levels), fvars);
+        body.MarkLoopStart();
         try
         {
-            Repr r = body.Emit(app);
+            Repr r = body.Emit(app, tail: true);
             body.Coerce(r, e.Result);
         }
         catch (CompileError ce)
@@ -359,6 +563,81 @@ internal sealed class Compiler
             throw new CompileError($"{e.Name}: {ce.Message}");
         }
         body.Il.Emit(OpCodes.Ret);
+        if (e.Impl is not null)
+        {
+            CompileEntry(e);
+        }
+    }
+
+    /// <summary>
+    /// The public method of an export: refuse a negative <c>Nat</c>, call the body, and if the recursion under it runs
+    /// out of stack, run the same call again on a thread with a 1 GB stack (see <c>LeanStack</c>).
+    /// </summary>
+    private void CompileEntry(Export e)
+    {
+        ILGenerator il = e.Raw.GetILGenerator();
+        Param[] runtime = e.Params.Where(p => p.Repr.IsData).ToArray();
+        for (int i = 0; i < runtime.Length; i++)
+        {
+            if (runtime[i].Repr.Kind == Kind.Nat)
+            {
+                // .NET has no unsigned BigInteger: refuse a negative Nat at the door.
+                il.Emit(OpCodes.Ldarg, i);
+                il.Emit(OpCodes.Ldstr, runtime[i].ClrName);
+                il.Emit(OpCodes.Call, _natCheck);
+                il.Emit(OpCodes.Starg, i);
+            }
+        }
+        LocalBuilder result = il.DeclareLocal(e.Result.ClrType);
+        Label done = il.BeginExceptionBlock();
+        for (int i = 0; i < runtime.Length; i++)
+        {
+            il.Emit(OpCodes.Ldarg, i);
+        }
+        il.Emit(OpCodes.Call, e.Impl!);
+        il.Emit(OpCodes.Stloc, result);
+        il.BeginCatchBlock(_clr.LeanStackOverflow);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldtoken, e.Impl!);
+        il.Emit(OpCodes.Ldc_I4, runtime.Length);
+        il.Emit(OpCodes.Newarr, _clr.Object);
+        for (int i = 0; i < runtime.Length; i++)
+        {
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4, i);
+            il.Emit(OpCodes.Ldarg, i);
+            if (runtime[i].Repr.ClrType.IsValueType)
+            {
+                il.Emit(OpCodes.Box, runtime[i].Repr.ClrType);
+            }
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        il.Emit(OpCodes.Call, _clr.Static(_clr.LeanStack, "RunDeep", _clr.RuntimeMethodHandle, _clr.Object.MakeArrayType()));
+        il.Emit(OpCodes.Unbox_Any, e.Result.ClrType);
+        il.Emit(OpCodes.Stloc, result);
+        il.EndExceptionBlock();
+        il.Emit(OpCodes.Ldloc, result);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>The right-hand side of <c>∀ xs, f xs = rhs</c> at these arguments.</summary>
+    private static Expr EquationRhs(Expr equation, List<Expr> args, Name name)
+    {
+        Expr t = equation;
+        foreach (Expr a in args)
+        {
+            if (t is not PiExpr p)
+            {
+                throw new CompileError($"internal: the equation lemma of {name} binds fewer variables than {name} takes");
+            }
+            t = ExprOps.Instantiate1(p.Body, a);
+        }
+        if (!t.IsAppOfArity(Name.Parse("Eq"), 3))
+        {
+            throw new CompileError($"internal: the equation lemma of {name} is not an equation");
+        }
+        t.GetAppArgs(out Expr[] eqArgs);
+        return eqArgs[2];
     }
 
     /// <summary>
@@ -480,6 +759,16 @@ internal sealed class Compiler
         private readonly ILGenerator? _il;
         public ILGenerator Il => _il ?? throw new InvalidOperationException("a reducer emits no code");
         public TypeChecker Tc { get; }
+
+        /// <summary>The function being compiled, so a call to it in tail position can become a jump.</summary>
+        public Export? Self { get; init; }
+        private Label? _loopStart;
+
+        public void MarkLoopStart()
+        {
+            _loopStart = Il.DefineLabel();
+            Il.MarkLabel(_loopStart.Value);
+        }
 
         public Body(Compiler c, ILGenerator? il)
         {
@@ -621,7 +910,7 @@ internal sealed class Compiler
                     }
                     return ReferenceEquals(s, p.Struct) ? e : Expr.MkApp(Expr.Proj(p.StructName, p.Idx, s), args);
                 }
-                if (head is not ConstExpr c || _c._prims.ContainsKey(c.Name) || _c._exports.ContainsKey(c.Name))
+                if (head is not ConstExpr c || _c._prims.ContainsKey(c.Name) || _c._exports.ContainsKey(c.Name) || _c.IsRecursive(c.Name))
                 {
                     return e;
                 }
@@ -662,7 +951,7 @@ internal sealed class Compiler
 
         // -------------------------------------------------------------- emission
 
-        public Repr Emit(Expr e)
+        public Repr Emit(Expr e, bool tail = false)
         {
             e = Reduce(e);
             switch (e)
@@ -672,10 +961,11 @@ internal sealed class Compiler
                 case LitExpr { Value: NatLiteral n }:
                     PushBig(n.Value);
                     return new Repr(Kind.Nat, _c._clr.BigInteger);
-                case LitExpr:
-                    throw new CompileError("string literals are not compiled yet");
+                case LitExpr { Value: StrLiteral str }:
+                    Il.Emit(OpCodes.Ldstr, str.Value);
+                    return new Repr(Kind.String, _c._clr.String);
                 case LetExpr l:
-                    return EmitLet(l);
+                    return EmitLet(l, tail);
                 case ProjExpr p:
                     return EmitProj(p);
                 case LamExpr:
@@ -704,16 +994,25 @@ internal sealed class Compiler
                     Emit(args[i]);
                 }
                 prim.Emit(Il);
-                return prim.Result == Kind.Bool ? new Repr(Kind.Bool, _c._clr.Bool) : new Repr(prim.Result, _c._clr.BigInteger);
+                return prim.Result switch
+                {
+                    Kind.Bool => new Repr(Kind.Bool, _c._clr.Bool),
+                    Kind.String => new Repr(Kind.String, _c._clr.String),
+                    _ => new Repr(prim.Result, _c._clr.BigInteger),
+                };
             }
             if (_c._exports.TryGetValue(c.Name, out Export? ex))
             {
-                return EmitCall(ex, args);
+                return EmitCall(ex, args, tail);
+            }
+            if (_c.IsRecursive(c.Name))
+            {
+                return EmitCall(_c.Helper(c, args), args, tail);
             }
             return _c.Resolve(c.Name) switch
             {
                 ConstructorInfo ci => EmitCtor(ci, args, e),
-                RecursorInfo ri => EmitRec(ri, args, e),
+                RecursorInfo ri => EmitRec(ri, args, e, tail),
                 TheoremInfo => throw new CompileError($"the theorem {c.Name} is used as data"),
                 AxiomInfo => throw new CompileError($"the axiom {c.Name} has no computational content"),
                 OpaqueInfo => throw new CompileError($"{c.Name} is opaque; its value cannot be compiled"),
@@ -758,12 +1057,12 @@ internal sealed class Compiler
             }
         }
 
-        private Repr EmitLet(LetExpr l)
+        private Repr EmitLet(LetExpr l, bool tail)
         {
             Repr r = _c.ReprOf(l.Type, Tc);
             if (!r.IsData)
             {
-                return Emit(ExprOps.Instantiate1(l.Body, l.Value));
+                return Emit(ExprOps.Instantiate1(l.Body, l.Value), tail);
             }
             Repr vr = Emit(l.Value);
             Coerce(vr, r);
@@ -771,7 +1070,7 @@ internal sealed class Compiler
             Il.Emit(OpCodes.Stloc, lb);
             Expr fv = Tc.Lctx.MkLetDecl(l.Name, l.Type, l.Value);
             Bind(fv, new Slot.Local(lb, r));
-            return Emit(ExprOps.Instantiate1(l.Body, fv));
+            return Emit(ExprOps.Instantiate1(l.Body, fv), tail);
         }
 
         private Repr EmitProj(ProjExpr p)
@@ -788,20 +1087,34 @@ internal sealed class Compiler
             return f.Repr;
         }
 
-        private Repr EmitCall(Export ex, Expr[] args)
+        private Repr EmitCall(Export ex, Expr[] args, bool tail)
         {
             if (args.Length != ex.Params.Count)
             {
                 throw new CompileError($"{ex.Name} is applied to {args.Length} arguments but takes {ex.Params.Count}; partial application is not compiled yet");
             }
+            int n = 0;
             for (int i = 0; i < args.Length; i++)
             {
                 if (ex.Params[i].Repr.IsData)
                 {
                     Coerce(Emit(args[i]), ex.Params[i].Repr);
+                    n++;
                 }
             }
-            Il.Emit(OpCodes.Call, ex.Raw);
+            if (tail && ReferenceEquals(ex, Self) && _loopStart is Label start)
+            {
+                // A call to itself in tail position: store the new arguments over the old ones and jump back. Every
+                // argument was computed before any is stored, so none sees another's new value. gcd, loops and
+                // accumulators run in constant stack.
+                for (int k = n - 1; k >= 0; k--)
+                {
+                    Il.Emit(OpCodes.Starg, k);
+                }
+                Il.Emit(OpCodes.Br, start);
+                return ex.Result;
+            }
+            Il.Emit(OpCodes.Call, ex.Target);
             return ex.Result;
         }
 
@@ -822,6 +1135,40 @@ internal sealed class Compiler
                 case "Bool.true" or "Decidable.isTrue":
                     Il.Emit(OpCodes.Ldc_I4_1);
                     return new Repr(Kind.Bool, _c._clr.Bool);
+                case "List.nil" or "List.cons" or "Option.none" or "Option.some":
+                {
+                    Repr r = _c.ReprOf(Tc.Infer(whole), Tc);
+                    if (!r.IsData)
+                    {
+                        throw new CompileError(r.Why ?? $"no run-time form for {whole}");
+                    }
+                    Type t = r.ClrType;
+                    Type el = r.Elem!.ClrType;
+                    switch (ci.Name.ToString())
+                    {
+                        case "List.nil":
+                        case "Option.none":
+                            Il.Emit(OpCodes.Ldtoken, t);
+                            Il.Emit(OpCodes.Call, _c._clr.Static(_c._clr.LeanOps, ci.Name.ToString() == "List.nil" ? "Nil" : "None", _c._clr.RuntimeTypeHandle));
+                            break;
+                        case "List.cons":
+                            Coerce(Emit(args[2]), r);
+                            Coerce(Emit(args[1]), r.Elem!);
+                            BoxIfValue(el);
+                            Il.Emit(OpCodes.Callvirt, _c._clr.ILeanList.GetMethod("Prepend")!);
+                            break;
+                        default:
+                            Il.Emit(OpCodes.Ldtoken, t);
+                            Il.Emit(OpCodes.Call, _c._clr.Static(_c._clr.LeanOps, "None", _c._clr.RuntimeTypeHandle));
+                            Il.Emit(OpCodes.Castclass, _c._clr.ILeanOption);
+                            Coerce(Emit(args[1]), r.Elem!);
+                            BoxIfValue(el);
+                            Il.Emit(OpCodes.Callvirt, _c._clr.ILeanOption.GetMethod("Some")!);
+                            break;
+                    }
+                    Il.Emit(OpCodes.Castclass, t);
+                    return r;
+                }
             }
             var ind = (InductiveInfo)_c.Resolve(ci.Induct)!;
             Layout l = _c.LayoutFor(ind) ?? throw new CompileError($"the type {ci.Induct} is not compiled: {_c._layoutFailures.GetValueOrDefault(ci.Induct)}");
@@ -843,7 +1190,7 @@ internal sealed class Compiler
         }
 
         /// <summary>A recursor whose target is only known at run time: a branch per constructor.</summary>
-        private Repr EmitRec(RecursorInfo ri, Expr[] args, Expr whole)
+        private Repr EmitRec(RecursorInfo ri, Expr[] args, Expr whole, bool tail)
         {
             if (args.Length <= ri.MajorIdx)
             {
@@ -865,7 +1212,7 @@ internal sealed class Compiler
             {
                 if (ind.Ctors.Length == 1)
                 {
-                    return EmitMinor(minors[0], [], extra, erasedFields: ((ConstructorInfo)_c.Resolve(ind.Ctors[0])!).NumFields);
+                    return EmitMinor(minors[0], [], extra, erasedFields: ((ConstructorInfo)_c.Resolve(ind.Ctors[0])!).NumFields, tail: tail);
                 }
                 Repr rr = _c.ReprOf(Tc.Infer(whole), Tc);
                 Throw("System.InvalidOperationException", "unreachable: a proof of an empty proposition");
@@ -879,8 +1226,8 @@ internal sealed class Compiler
                     int fields = indName.ToString() == "Decidable" ? 1 : 0;
                     Emit(major);
                     return Branch2(
-                        () => EmitMinor(minors[1], [], extra, erasedFields: fields),
-                        () => EmitMinor(minors[0], [], extra, erasedFields: fields));
+                        () => EmitMinor(minors[1], [], extra, erasedFields: fields, tail: tail),
+                        () => EmitMinor(minors[0], [], extra, erasedFields: fields, tail: tail));
                 }
                 case "Nat":
                 {
@@ -888,7 +1235,7 @@ internal sealed class Compiler
                     Il.Emit(OpCodes.Ldloca, m);
                     Il.Emit(OpCodes.Call, _c._clr.BigInteger.GetProperty("IsZero")!.GetGetMethod()!);
                     return Branch2(
-                        () => EmitMinor(minors[0], [], extra),
+                        () => EmitMinor(minors[0], [], extra, tail: tail),
                         () =>
                         {
                             Il.Emit(OpCodes.Ldloc, m);
@@ -896,8 +1243,46 @@ internal sealed class Compiler
                             LocalBuilder pred = Il.DeclareLocal(_c._clr.BigInteger);
                             Il.Emit(OpCodes.Stloc, pred);
                             return EmitMinor(minors[1], [new Slot.Local(pred, new Repr(Kind.Nat, _c._clr.BigInteger)),
-                                new Slot.Unavailable("this is structural recursion, which lean2il does not compile yet")], extra);
+                                new Slot.Unavailable("this uses the recursor's induction hypothesis directly; write the recursion as a recursive definition instead")], extra, tail: tail);
                         });
+                }
+                case "List":
+                case "Option":
+                {
+                    Repr r = _c.ReprOf(Tc.Infer(major), Tc);
+                    if (!r.IsData)
+                    {
+                        throw new CompileError(r.Why ?? $"no run-time form for {major}");
+                    }
+                    Type t = r.ClrType;
+                    bool isList = r.Kind == Kind.List;
+                    LocalBuilder cell = Spill(major, t);
+                    Type el = r.Elem!.ClrType;
+                    Type iface = isList ? _c._clr.ILeanList : _c._clr.ILeanOption;
+                    Il.Emit(OpCodes.Ldloc, cell);
+                    Il.Emit(OpCodes.Callvirt, _c._clr.Getter(iface, isList ? "IsNil" : "IsSome"));
+                    Func<Repr> empty = () => EmitMinor(minors[0], [], extra, tail: tail);
+                    Func<Repr> full = () =>
+                    {
+                        Il.Emit(OpCodes.Ldloc, cell);
+                        Il.Emit(OpCodes.Callvirt, _c._clr.Getter(iface, isList ? "HeadObject" : "ValueObject"));
+                        Il.Emit(OpCodes.Unbox_Any, el);
+                        LocalBuilder head = Il.DeclareLocal(r.Elem!.ClrType);
+                        Il.Emit(OpCodes.Stloc, head);
+                        if (!isList)
+                        {
+                            return EmitMinor(minors[1], [new Slot.Local(head, r.Elem)], extra, tail: tail);
+                        }
+                        Il.Emit(OpCodes.Ldloc, cell);
+                        Il.Emit(OpCodes.Callvirt, _c._clr.Getter(iface, "TailObject"));
+                        Il.Emit(OpCodes.Castclass, t);
+                        LocalBuilder rest = Il.DeclareLocal(t);
+                        Il.Emit(OpCodes.Stloc, rest);
+                        return EmitMinor(minors[1], [new Slot.Local(head, r.Elem), new Slot.Local(rest, r),
+                            new Slot.Unavailable("this uses the recursor's induction hypothesis directly; write the recursion as a recursive definition instead")], extra, tail: tail);
+                    };
+                    // IsNil true -> the nil branch; IsSome true -> the some branch.
+                    return isList ? Branch2(empty, full) : Branch2(full, empty);
                 }
                 case "Int":
                 {
@@ -914,9 +1299,9 @@ internal sealed class Compiler
                             Il.Emit(OpCodes.Call, _c._clr.Static(_c._clr.LeanNat, "Pred", _c._clr.BigInteger));
                             LocalBuilder n = Il.DeclareLocal(_c._clr.BigInteger);
                             Il.Emit(OpCodes.Stloc, n);
-                            return EmitMinor(minors[1], [new Slot.Local(n, new Repr(Kind.Nat, _c._clr.BigInteger))], extra);
+                            return EmitMinor(minors[1], [new Slot.Local(n, new Repr(Kind.Nat, _c._clr.BigInteger))], extra, tail: tail);
                         },
-                        () => EmitMinor(minors[0], [new Slot.Local(m, new Repr(Kind.Nat, _c._clr.BigInteger))], extra));
+                        () => EmitMinor(minors[0], [new Slot.Local(m, new Repr(Kind.Nat, _c._clr.BigInteger))], extra, tail: tail));
                 }
             }
             Layout l = _c.LayoutFor(ind) ?? throw new CompileError($"matching on {indName} is not compiled: {_c._layoutFailures.GetValueOrDefault(indName)}");
@@ -931,7 +1316,7 @@ internal sealed class Compiler
                 for (int i = 0; i < labels.Length; i++)
                 {
                     Il.MarkLabel(labels[i]);
-                    Repr r = EmitMinor(minors[i], [], extra);
+                    Repr r = EmitMinor(minors[i], [], extra, tail: tail);
                     if (result is not null)
                     {
                         Coerce(r, result);
@@ -958,7 +1343,7 @@ internal sealed class Compiler
                 Il.Emit(OpCodes.Stloc, lb);
                 slots.Add(new Slot.Local(lb, f.Repr));
             }
-            return EmitMinor(minors[0], slots, extra);
+            return EmitMinor(minors[0], slots, extra, tail: tail);
         }
 
         private void Throw(string exceptionType, string message)
@@ -967,6 +1352,14 @@ internal sealed class Compiler
             Il.Emit(OpCodes.Ldstr, message);
             Il.Emit(OpCodes.Newobj, t.GetConstructor([_c._clr.String])!);
             Il.Emit(OpCodes.Throw);
+        }
+
+        private void BoxIfValue(Type t)
+        {
+            if (t.IsValueType)
+            {
+                Il.Emit(OpCodes.Box, t);
+            }
         }
 
         private LocalBuilder Spill(Expr e, Type t)
@@ -992,7 +1385,7 @@ internal sealed class Compiler
         }
 
         /// <summary>Apply a recursor's branch to its fields, bound to <paramref name="fieldSlots"/>, then to the extra arguments.</summary>
-        private Repr EmitMinor(Expr minor, IReadOnlyList<Slot> fieldSlots, Expr[] extra, int erasedFields = 0)
+        private Repr EmitMinor(Expr minor, IReadOnlyList<Slot> fieldSlots, Expr[] extra, int erasedFields = 0, bool tail = false)
         {
             int n = Math.Max(fieldSlots.Count, erasedFields);
             Expr cur = minor;
@@ -1004,7 +1397,7 @@ internal sealed class Compiler
                 Slot s = i < fieldSlots.Count ? fieldSlots[i] : Slot.Erased.Instance;
                 fvs.Add(Fresh(pi.BinderName, pi.Domain, s));
             }
-            return Emit(Expr.MkApp(Expr.MkApp(minor, fvs), extra));
+            return Emit(Expr.MkApp(Expr.MkApp(minor, fvs), extra), tail);
         }
     }
 }

@@ -58,12 +58,18 @@ using Finance;
 Proven.Round(0.125m, 2, RoundingMode.AwayFromZero);   // 0.13, proved by invoice_example
 Proven.Round(-2.675m, 2, RoundingMode.AwayFromZero);  // -2.68, proved by refund_example
 Proven.RoundCents(19.995m);                            // 20.00, proved by roundCents_example
+Proven.SplitEven(10000, 3);                            // [3334, 3333, 3333], proved by splitEven_example
 ```
+
+And one more trap every billing system meets: split a $100.00 bill three ways as `total / 3` each and a cent
+disappears. `Proven.SplitEven` gives the first `total % n` people the extra cent, and it is proved that the
+shares always add up to exactly the total, refunds included, and never differ by more than a cent.
 
 ## What is proved
 
 [`lean/Finance/Rounding.lean`](lean/Finance/Rounding.lean) defines rounding on exact decimals, a mantissa and
-a scale like `System.Decimal`, for all five of .NET's `MidpointRounding` modes, and proves:
+a scale like `System.Decimal`, for all five of .NET's `MidpointRounding` modes, and
+[`lean/Finance/Split.lean`](lean/Finance/Split.lean) splits a bill, by recursion over a list. They prove:
 
 | Theorem | Says |
 |---|---|
@@ -76,6 +82,9 @@ a scale like `System.Decimal`, for all five of .NET's `MidpointRounding` modes, 
 | `round_of_scale_le` | A value already at the precision is returned unchanged. |
 | `roundDiv_toEven_eq_awayFromZero` | Banker's rounding and away-from-zero differ only on exact ties. |
 | `double_rounding_example` | Rounding 2.4449 to three places and then two gives 2.45; directly, 2.44. |
+| `splitEven_sum` | The shares of a split add up to exactly the total, for any number of people, refunds included. |
+| `splitEven_fair` | Every share is the total divided by `n`, rounded down, or one cent more. |
+| `splitEven_length` | There are exactly `n` shares. |
 
 plus floor, ceiling and truncation specs for the directed modes, and the worked examples above. Every
 theorem rests on at most Lean's three standard axioms (`propext`, `Quot.sound`, `Classical.choice`); none
@@ -100,22 +109,35 @@ correct; the bugs above come from its default and from `double`.
 1. **Re-check.** `lean2il` maps the project's `.olean` files with Tenet and re-checks every declaration.
    By default that covers Lean's own library under the project too (64,855 declarations here, about a
    minute and a half); `--trust-imports` checks only the project. If Tenet rejects anything, nothing is emitted.
-2. **Compile the kernel term.** The input is the term Tenet just checked, not Lean's compiler IR, so the IL
+2. **Get the equations of recursive definitions.** Lean turns a recursive definition into a term built on
+   `brecOn` or `WellFounded.fix`, which says nothing a machine can run well. But Lean also proves, for every
+   recursive `f`, the equation `f.eq_def : ∀ xs, f xs = rhs`, where `rhs` is the body as written. lean2il has
+   Lean generate those equations (in a small module it writes, `.lake/lean2il/Lean2IlEqns.lean`), Tenet re-checks
+   them with everything else, and each recursive method is compiled from its equation's right-hand side. The IL
+   computes something both kernels agree equals `f`. This covers Lean's own library too: `List.map`,
+   `List.foldr`, `List.reverse` and friends compile the same way.
+3. **Compile the kernel term.** The input is the term Tenet just checked, not Lean's compiler IR, so the IL
    computes the function the theorems are about. Kernel terms are not written for running, so compilation
    is mostly partial evaluation: type-class instances, coercions and numerals are unfolded; `Nat` and `Int`
    operations become `BigInteger` calls with Lean's meaning (Euclidean division, truncated `Nat`
    subtraction, `x / 0 = 0`); a `match` or `if` is a recursor, reduced at compile time when its target is a
    known constructor and turned into a branch otherwise; types and proofs are erased, and `Decidable` keeps
-   its answer and drops its proof.
-3. **Emit.** A structure becomes a sealed class, an enum-like inductive a .NET enum, each export a static
+   its answer and drops its proof. A call to itself in tail position becomes a jump, so a loop runs in constant
+   stack; any other recursion that outgrows the stack is rerun, transparently, on a thread with a 1 GB stack.
+   That is safe to do because a compiled Lean function has no side effects.
+4. **Emit.** A structure becomes a sealed class, an enum-like inductive a .NET enum, each export a static
    method. A structure shaped like a decimal (an `Int` and a `Nat`) also gets a `decimal` overload, so the
    Lean `round (x : Dec) (digits : Nat) (mode : RoundingMode) : Dec` is callable as
    `decimal Round(decimal x, int digits, RoundingMode mode)`. The assembly is written with
    `PersistedAssemblyBuilder` against the reference assemblies, so any .NET 10 project can reference it.
-4. **Document and replay.** Every theorem of the form `f args = result` with literal arguments becomes a C#
+5. **Document and replay.** Every theorem of the form `f args = result` with literal arguments becomes a C#
    example. Before it is written down it is run against the new assembly through both overloads and must
    return the proved value. `ProvenInfo.Verdict` and `ProvenInfo.Theorems()` carry the result into the
    assembly itself.
+6. **Test against Lean's own compiler.** Every export is run on 100 random inputs twice: by Lean, through its
+   own compiler (`lean --run`, which shares no code with lean2il), and by the IL. The build fails on the first
+   disagreement and names the input. It catches real bugs: counting a string's length in UTF-16 units instead
+   of characters fails it at once, on `"a7zßz😀"`.
 
 ## Docs from Lean
 
@@ -140,7 +162,7 @@ page. Lean's other documentation tools fit around this rather than inside it:
 
 ## The VS Code extension
 
-`vscode/` builds `lean-to-dot-net-0.3.0.vsix`. **It brings lean2il and Tenet with it**, so the VSIX alone is
+`vscode/` builds `lean-to-dot-net-0.4.0.vsix`. **It brings lean2il and Tenet with it**, so the VSIX alone is
 enough: install it, open a Lean project, and build. It needs the .NET 10 runtime and Lean, and offers to install
 either if it is missing.
 
@@ -215,27 +237,45 @@ and reference `.lake/dotnet/<Namespace>.Proven.dll` and `.lake/dotnet/LeanToDotN
 
 ## What the compiler supports
 
-Non-recursive definitions over `Nat`, `Int`, `Bool`, `Decidable`, structures and enum-like inductives
-declared in the project; `if`, `match`, `let`, instances, numerals and coercions; calls between exports.
-Not yet, and refused with a message rather than miscompiled: recursion (structural or well-founded),
-function values, strings, `Float`, and inductive types with parameters, indices or recursive fields.
+| Lean | .NET |
+|---|---|
+| `Nat`, `Int` | `BigInteger` (a negative `Nat` argument is refused) |
+| `Bool`, `Decidable p` | `bool` |
+| `String` | `string`; lengths count characters, as Lean's do |
+| `List α` | `LeanList<T>`, immutable; C# can pass an array where one is expected |
+| `Option α` | `LeanOption<T>` |
+| a structure, an enum-like inductive | a sealed class, a .NET enum |
+| a structure of an `Int` and a `Nat` | also `decimal`, through an overload |
+
+Definitions compile with `if`, `match`, `let`, instances, numerals and coercions, and **recursion**: structural
+or well-founded, your own or Lean's library's (`List.map`, `foldr`, `length`, `reverse`, `++`, `sum`). A function
+passed as an argument compiles when it uses no local variables, by specializing the function to it, as a C++
+template would be.
+
+Not yet, and refused with a message that says why rather than compiled wrong: a lambda that captures local
+variables, `Float`, `Array`, and user-defined inductive types with parameters, indices or recursive fields.
+[`examples/showcase`](examples/showcase) shows every supported feature, and the build compiles and
+differential-tests it every time.
 
 ## What this rests on
 
-- Lean's kernel, which accepted every proof, and Tenet, which accepted them again independently.
-- `lean2il`'s translation from kernel terms to IL. It is not proved. It is tested: the proved examples are
-  replayed on every build, the runtime is checked against Lean's own `#eval` output, and `Proven.Round` is
-  compared with `Math.Round(decimal)` on 300,000 inputs.
-- `LeanToDotNet.Runtime`: `BigInteger` arithmetic with Lean's meaning, and the exact `decimal` conversion,
-  which refuses a value with no `decimal` form rather than rounding it.
+- Lean's kernel, which accepted every proof, and Tenet, which accepted them again independently, together with
+  the equation lemmas recursive functions are compiled from.
+- `lean2il`'s translation from kernel terms to IL. It is not proved. It is tested, three ways, on every build:
+  the proved examples are replayed; every export is run on random inputs by Lean's own compiler and by the IL,
+  which must agree; and the test suite checks the runtime against Lean's `#eval` output and `Proven.Round`
+  against `Math.Round(decimal)` on 300,000 inputs.
+- `LeanToDotNet.Runtime`: `BigInteger` arithmetic with Lean's meaning, strings with Lean's lengths, immutable lists,
+  and the exact `decimal` conversion, which refuses a value with no `decimal` form rather than rounding it.
 
 ## Layout
 
 | Path | |
 |---|---|
-| [`lean/`](lean) | the Lake project: `Finance/Rounding.lean`, definitions and proofs |
-| [`src/Lean2Il/`](src/Lean2Il) | the compiler: `Compiler.cs` (kernel term to IL), `Docs.cs` (docs and replay), `Primitives.cs` |
-| [`src/LeanToDotNet.Runtime/`](src/LeanToDotNet.Runtime) | what the emitted assembly calls: `LeanNat`, `LeanInt`, `DecimalBridge` |
+| [`lean/`](lean) | the Lake project: `Finance/Rounding.lean` and `Finance/Split.lean`, definitions and proofs |
+| [`examples/showcase/`](examples/showcase) | recursion, lists, options and strings, compiled and differential-tested on every build |
+| [`src/Lean2Il/`](src/Lean2Il) | the compiler: `Compiler.cs` (kernel term to IL), `Equations.cs` (equation lemmas), `Differential.cs` (Lean vs IL), `Docs.cs` (docs and replay), `Primitives.cs` |
+| [`src/LeanToDotNet.Runtime/`](src/LeanToDotNet.Runtime) | what the emitted assembly calls: `LeanNat`, `LeanInt`, `LeanList`, `LeanOption`, `LeanString`, `LeanStack`, `DecimalBridge` |
 | [`tests/`](tests) | runtime against Lean, `Proven.Round` against `Math.Round(decimal)`, the three bugs |
 | [`samples/Invoice/`](samples/Invoice) | a console app: the three bugs next to the proved fix |
 | [`vscode/`](vscode) | the VS Code extension |

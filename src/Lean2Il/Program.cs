@@ -21,6 +21,8 @@ internal static class Program
           --class <name>        static class holding the exported functions (default: Proven)
           --trust-imports       re-check only the project's own modules, not Lean's library under them
           --no-check            skip the Tenet re-check (the docs then say the proofs were not re-checked)
+          --fuzz <n>            random inputs per exported function, run by Lean and by the IL, which must
+                                agree (default 100; 0 skips it)
           --leanviz <url>       LeanViz site for the project; theorem names in the docs link there
           --source <url>        base URL of the Lean sources, for links to each theorem's line
           --version             print the version
@@ -107,12 +109,65 @@ internal static class Program
         string lean = checker.Modules[own[0].Module].LeanVersion;
         Console.WriteLine($"lean2il: {own.Count} modules in {project} (Lean {lean})");
 
-        // 1. Re-check with Tenet. Nothing is emitted from a project an independent kernel will not accept.
+        // 1. What to compile: everything marked @[export].
+        var exports = new List<Name>();
+        var ownConstants = new HashSet<Name>();
+        foreach (var (module, _) in own)
+        {
+            OleanModule om = checker.Modules[module];
+            // Lean also attaches @[export] to the helpers it builds for well-founded recursion (f._unary); those are
+            // its plumbing, not the author's, and their names start with an underscore.
+            exports.AddRange(om.KeysInExtension(Name.Parse("Lean.exportAttr")).Where(n => n.LastString?.StartsWith('_') != true));
+            ownConstants.UnionWith(om.ConstantNames);
+        }
+        if (exports.Count == 0)
+        {
+            throw new CompileError("nothing is marked @[export]; mark each definition to compile with @[export some_symbol]");
+        }
+        exports.Sort((a, b) => string.CompareOrdinal(a.ToString(), b.ToString()));
+        string ns = o.Namespace ?? CommonNamespace(exports);
+        string asmName = o.Assembly ?? (ns.Length > 0 ? ns + ".Proven" : "Lean.Proven");
+
+        var env = new Environment();
+        env.SetResolver(checker.Resolve);
+        if (checker.Resolve(Quot.QuotName) is QuotInfo)
+        {
+            env.MarkQuotInitialized();
+        }
+        string runtimePath = typeof(LeanToDotNet.Runtime.LeanNat).Assembly.Location;
+        using var clr = new Clr(runtimePath);
+        var pab = new PersistedAssemblyBuilder(new AssemblyName(asmName) { Version = new Version(1, 0, 0, 0) }, clr.CoreAssembly);
+        ModuleBuilder mb = pab.DefineDynamicModule(asmName);
+        var equations = new Dictionary<Name, Expr>();
+        var compiler = new Compiler(checker, env, clr, mb, ns, o.Class, ownConstants, equations);
+
+        // 2. Recursive definitions: ask Lean for their equation lemmas, in a module Tenet will check with the rest.
+        var recursive = compiler.RecursiveReachableFrom(exports);
+        var checkTargets = own.Select(m => m.Module).ToList();
+        Equations.Result eqns = Equations.Generate(project, recursive, ownModules, lean);
+        if (eqns.Module is { } eqModule)
+        {
+            search.Add(Path.GetDirectoryName(eqModule.Path)!);
+            checker.Load([eqModule]);
+            checkTargets.Add(eqModule.Module);
+            Equations.Read(eqns, checker, recursive);
+            foreach (var (k, v) in eqns.ByDefinition)
+            {
+                equations[k] = v;
+            }
+            Console.WriteLine($"lean2il: {Plural(equations.Count, "recursive definition")}, compiled from equation lemmas Lean proved: {string.Join(", ", equations.Keys.Select(k => k.ToString()).Order())}");
+        }
+        foreach (Name f in eqns.Failed)
+        {
+            Console.WriteLine($"lean2il: Lean gave no equation lemma for {f}; anything that needs it will be refused");
+        }
+
+        // 3. Re-check with Tenet. Nothing is emitted from a project an independent kernel will not accept.
         Verdict verdict = Verdict.NotChecked;
         if (!o.NoCheck)
         {
             var sw = Stopwatch.StartNew();
-            OleanCheckResult r = checker.Check(own.Select(m => m.Module).ToList(), new OleanCheckOptions { CheckImports = !o.TrustImports });
+            OleanCheckResult r = checker.Check(checkTargets, new OleanCheckOptions { CheckImports = !o.TrustImports });
             verdict = new Verdict(true, !o.TrustImports, r.Checked, r.ModulesChecked, r.Failures.Count, sw.Elapsed, lean);
             Console.WriteLine($"tenet: {r.Checked:N0} declarations in {r.ModulesChecked:N0} modules re-checked{(o.TrustImports ? " (project only)" : " (with everything they import)")}, {r.Failures.Count} failed, {sw.Elapsed.TotalSeconds:F1}s");
             if (!r.Success)
@@ -125,41 +180,14 @@ internal static class Program
             }
         }
 
-        // 2. What to compile: everything marked @[export].
-        var exports = new List<Name>();
-        var ownConstants = new HashSet<Name>();
-        foreach (var (module, _) in own)
-        {
-            OleanModule om = checker.Modules[module];
-            exports.AddRange(om.KeysInExtension(Name.Parse("Lean.exportAttr")));
-            ownConstants.UnionWith(om.ConstantNames);
-        }
-        if (exports.Count == 0)
-        {
-            throw new CompileError("nothing is marked @[export]; mark each definition to compile with @[export some_symbol]");
-        }
-        exports.Sort((a, b) => string.CompareOrdinal(a.ToString(), b.ToString()));
-        string ns = o.Namespace ?? CommonNamespace(exports);
-        string asmName = o.Assembly ?? (ns.Length > 0 ? ns + ".Proven" : "Lean.Proven");
-
-        // 3. Compile.
-        var env = new Environment();
-        env.SetResolver(checker.Resolve);
-        if (checker.Resolve(Quot.QuotName) is QuotInfo)
-        {
-            env.MarkQuotInitialized();
-        }
-        string runtimePath = typeof(LeanToDotNet.Runtime.LeanNat).Assembly.Location;
-        using var clr = new Clr(runtimePath);
-        var pab = new PersistedAssemblyBuilder(new AssemblyName(asmName) { Version = new Version(1, 0, 0, 0) }, clr.CoreAssembly);
-        ModuleBuilder mb = pab.DefineDynamicModule(asmName);
-        var compiler = new Compiler(checker, env, clr, mb, ns, o.Class, ownConstants);
+        // 4. Compile: the exports, then every recursive helper they turned out to need.
         var declared = exports.Select(compiler.Declare).ToList();
         foreach (Export e in declared)
         {
             compiler.CompileBody(e);
             compiler.CompileDecimalOverload(e);
         }
+        compiler.CompilePending();
         var docs = new Docs(checker, env, compiler, ownModules, ownConstants, verdict, o, asmName);
         docs.Collect();
         compiler.Finish(docs.VerdictLine(), lean, docs.TheoremNames);
@@ -175,8 +203,20 @@ internal static class Program
             Console.WriteLine($"  {compiler.ClassName}.{e.ClrName}  <-  {e.Name}{(e.HasDecimalForm ? "  (with a decimal overload)" : "")}");
         }
 
-        // 4. Documentation from the Lean, and a replay of every proved example against the IL.
+        // 5. Documentation from the Lean, and a replay of every proved example against the IL.
         int replayed = docs.Replay(dll);
+        if (o.Fuzz > 0)
+        {
+            var sw2 = Stopwatch.StartNew();
+            Differential.Outcome d = new Differential(compiler, project, ownModules, o.Fuzz).Run(dll);
+            docs.DifferentialLine = d.Calls == 0 ? null
+                : $"{d.Calls:N0} random calls to {Plural(d.Functions, "function")}, each run by Lean's own compiler and by the IL, gave the same answer every time.";
+            Console.WriteLine($"differential: {d.Calls:N0} random calls to {Plural(d.Functions, "function")}, Lean's own compiler and the IL agree on every one ({sw2.Elapsed.TotalSeconds:F1}s)");
+            foreach (string why in d.SkippedWhy)
+            {
+                Console.WriteLine($"differential: skipped {why}");
+            }
+        }
         docs.Write(outDir);
         Console.WriteLine($"docs: {asmName}.xml (IntelliSense), {asmName}.md (how to call it), {asmName}.proof.json; {Plural(docs.TheoremCount, "theorem")}, {Plural(replayed, "proved example")} replayed against the IL{(replayed > 0 ? ", all equal" : "")}");
         Console.WriteLine($"done in {total.Elapsed.TotalSeconds:F1}s");
@@ -216,6 +256,7 @@ internal sealed class Options
     public bool Version { get; private set; }
     public string? LeanViz { get; private set; }
     public string? Source { get; private set; }
+    public int Fuzz { get; private set; } = 100;
 
     public static Options? Parse(string[] args)
     {
@@ -236,6 +277,7 @@ internal sealed class Options
                 case "--no-check": o.NoCheck = true; break;
                 case "--leanviz": o.LeanViz = Next(); break;
                 case "--source": o.Source = Next(); break;
+                case "--fuzz": o.Fuzz = int.TryParse(Next(), out int f) && f >= 0 ? f : throw new ArgumentException("--fuzz needs a number, 0 or more"); break;
                 default:
                     if (a.StartsWith('-'))
                     {

@@ -5,6 +5,7 @@
     <IsTestProject>true</IsTestProject>
     <!-- The assembly lean2il emits from ../../lean. Build it first: ./build.sh does, in order. -->
     <ProvenDir>$(MSBuildThisFileDirectory)../../lean/.lake/dotnet/</ProvenDir>
+    <ShowcaseDir>$(MSBuildThisFileDirectory)../../examples/showcase/.lake/dotnet/</ShowcaseDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +17,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/LeanToDotNet.Runtime/LeanToDotNet.Runtime.csproj" />
     <Reference Include="Finance.Proven" HintPath="$(ProvenDir)Finance.Proven.dll" />
+    <Reference Include="Showcase.Proven" HintPath="$(ShowcaseDir)Showcase.Proven.dll" />
   </ItemGroup>
 
 </Project>

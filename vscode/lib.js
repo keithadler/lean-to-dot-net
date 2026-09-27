@@ -64,6 +64,8 @@ function parseBuildOutput(output) {
     }
     const tenet = /REJECTED \S+: (\S+): (.*)$/.exec(lines[i]);
     if (tenet) { problems.push({ kind: 'tenet', name: tenet[1], severity: 'error', message: 'Tenet rejected this declaration: ' + tenet[2] }); continue; }
+    const diff = /^lean2il: the IL disagrees with Lean's own compiler on ([A-Za-z_][\w.']*) (.*)$/.exec(lines[i]);
+    if (diff) { problems.push({ kind: 'lean2il', name: diff[1], severity: 'error', message: `The compiled code and Lean's own compiler disagree on ${diff[1]} ${diff[2]}. This is a lean2il bug; please report it.` }); continue; }
     const l2 = /^lean2il: ([A-Za-z_][\w.']*): (.*)$/.exec(lines[i]);
     if (l2 && l2[1].includes('.')) { problems.push({ kind: 'lean2il', name: l2[1], severity: 'error', message: 'lean2il cannot compile this: ' + l2[2] }); continue; }
     const general = /^lean2il: (.*)$/.exec(lines[i]);

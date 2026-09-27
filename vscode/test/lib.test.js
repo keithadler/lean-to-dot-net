@@ -60,6 +60,13 @@ lean2il: nothing is marked @[export]; mark each definition to compile with @[exp
   assert.match(p[0].message, /structural recursion/);
 });
 
+test('parseBuildOutput places a differential failure on the function it names', () => {
+  const p = lib.parseBuildOutput(`lean2il: the IL disagrees with Lean's own compiler on Rec.chars "a😀": Lean gives 2, the IL gives 3`);
+  assert.equal(p.length, 1);
+  assert.equal(p[0].name, 'Rec.chars');
+  assert.match(p[0].message, /Lean gives 2, the IL gives 3/);
+});
+
 test('hasRuntime reads dotnet --list-runtimes', () => {
   const rt = `Microsoft.AspNetCore.App 9.0.1 [/x]
 Microsoft.NETCore.App 9.0.1 [/usr/local/share/dotnet/shared/Microsoft.NETCore.App]

@@ -34,6 +34,17 @@ internal sealed class Clr : IDisposable
     public Type LeanNat { get; }
     public Type LeanInt { get; }
     public Type DecimalBridge { get; }
+    public Type LeanList { get; }
+    public Type LeanOption { get; }
+    public Type LeanString { get; }
+    public Type LeanOps { get; }
+    public Type ILeanList { get; }
+    public Type ILeanOption { get; }
+    public Type RuntimeTypeHandle { get; }
+    public Type RuntimeMethodHandle { get; }
+    public Type LeanStack { get; }
+    public Type LeanStackOverflow { get; }
+    public MethodInfo Getter(Type t, string property) => t.GetProperty(property)!.GetGetMethod()!;
 
     public Clr(string runtimeAssemblyPath)
     {
@@ -55,6 +66,16 @@ internal sealed class Clr : IDisposable
         LeanNat = runtime.GetType("LeanToDotNet.Runtime.LeanNat", throwOnError: true)!;
         LeanInt = runtime.GetType("LeanToDotNet.Runtime.LeanInt", throwOnError: true)!;
         DecimalBridge = runtime.GetType("LeanToDotNet.Runtime.DecimalBridge", throwOnError: true)!;
+        LeanList = runtime.GetType("LeanToDotNet.Runtime.LeanList`1", throwOnError: true)!;
+        LeanOption = runtime.GetType("LeanToDotNet.Runtime.LeanOption`1", throwOnError: true)!;
+        LeanString = runtime.GetType("LeanToDotNet.Runtime.LeanString", throwOnError: true)!;
+        LeanOps = runtime.GetType("LeanToDotNet.Runtime.LeanOps", throwOnError: true)!;
+        ILeanList = runtime.GetType("LeanToDotNet.Runtime.ILeanList", throwOnError: true)!;
+        ILeanOption = runtime.GetType("LeanToDotNet.Runtime.ILeanOption", throwOnError: true)!;
+        RuntimeTypeHandle = Core("System.RuntimeTypeHandle");
+        RuntimeMethodHandle = Core("System.RuntimeMethodHandle");
+        LeanStack = runtime.GetType("LeanToDotNet.Runtime.LeanStack", throwOnError: true)!;
+        LeanStackOverflow = runtime.GetType("LeanToDotNet.Runtime.LeanStackOverflowException", throwOnError: true)!;
     }
 
     private Type Core(string name) => CoreAssembly.GetType(name, throwOnError: true)!;

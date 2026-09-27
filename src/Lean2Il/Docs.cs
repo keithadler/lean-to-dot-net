@@ -45,6 +45,9 @@ internal sealed partial class Docs
 
     public int TheoremCount => _theorems.Count;
 
+    /// <summary>What the differential test found, when it ran.</summary>
+    public string? DifferentialLine { get; set; }
+
     public IReadOnlyList<string> TheoremNames => _theorems.Select(t => t.Name.ToString()).ToList();
 
     public Docs(OleanChecker loader, Environment env, Compiler compiler, HashSet<Name> modules, HashSet<Name> own, Verdict verdict, Options o, string asm)
@@ -70,6 +73,9 @@ internal sealed partial class Docs
     private sealed record BoolV(bool V) : Val;
     private sealed record EnumV(Layout L, int Index) : Val;
     private sealed record StructV(Layout L, Val[] Fields) : Val;
+    private sealed record StrV(string V) : Val;
+    private sealed record ListV(Val[] Items) : Val;
+    private sealed record OptV(Val? V) : Val;
 
     // ------------------------------------------------------------------ collecting
 
@@ -218,6 +224,10 @@ internal sealed partial class Docs
         {
             return new Num(n.Value);
         }
+        if (e is LitExpr { Value: StrLiteral str })
+        {
+            return new StrV(str.Value);
+        }
         Expr head = e.GetAppArgs(out Expr[] args);
         if (head is not ConstExpr c)
         {
@@ -233,6 +243,11 @@ internal sealed partial class Docs
             case "Nat.zero": return new Num(0);
             case "Bool.true": return new BoolV(true);
             case "Bool.false": return new BoolV(false);
+            case "List.nil": return new ListV([]);
+            case "List.cons":
+                return args.Length == 3 && Eval(args[1], reducer) is Val h && Eval(args[2], reducer) is ListV t ? new ListV([h, .. t.Items]) : null;
+            case "Option.none": return new OptV(null);
+            case "Option.some": return args.Length == 2 && Eval(args[1], reducer) is Val v1 ? new OptV(v1) : null;
         }
         if (_env.Find(c.Name) is not ConstructorInfo ci || _compiler.LayoutOf(ci.Induct) is not Layout l)
         {
@@ -312,9 +327,28 @@ internal sealed partial class Docs
             .Where(m => m.Name == ex.ClrName)
             .First(m => m.GetParameters().Any(p => p.ParameterType == typeof(decimal)) || m.ReturnType == typeof(decimal) ? decimalForm : !decimalForm);
 
+    /// <summary>The run-time type of a representation, in the replay's load context.</summary>
+    private static Type RuntimeType(Repr r, Assembly asm) => r.Kind switch
+    {
+        Kind.Nat or Kind.Int => typeof(BigInteger),
+        Kind.Bool => typeof(bool),
+        Kind.String => typeof(string),
+        Kind.List => RuntimeAssembly(asm).GetType("LeanToDotNet.Runtime.LeanList`1", true)!.MakeGenericType(RuntimeType(r.Elem!, asm)),
+        Kind.Option => RuntimeAssembly(asm).GetType("LeanToDotNet.Runtime.LeanOption`1", true)!.MakeGenericType(RuntimeType(r.Elem!, asm)),
+        _ => asm.GetType(r.Layout!.ClrName, true)!,
+    };
+
+    private static Assembly RuntimeAssembly(Assembly asm) =>
+        AssemblyLoadContext.GetLoadContext(asm)!.LoadFromAssemblyName(asm.GetReferencedAssemblies().First(a => a.Name == "LeanToDotNet.Runtime"));
+
     private static object ToClr(Val v, Repr r, Assembly asm, bool decimalForm) => v switch
     {
         Num n => decimalForm && r.Kind == Kind.Nat ? (object)(int)n.V : n.V,
+        StrV str => str.V,
+        ListV l => ListOf(l, r, asm),
+        OptV o => o.V is null
+            ? RuntimeType(r, asm).GetProperty("None")!.GetValue(null)!
+            : RuntimeType(r, asm).GetMethod("Some")!.Invoke(null, [ToClr(o.V, r.Elem!, asm, false)])!,
         BoolV b => b.V,
         EnumV e => Enum.ToObject(asm.GetType(e.L.ClrName, true)!, e.Index),
         StructV s when decimalForm && s.L.DecimalShaped => Runtime.DecimalBridge.FromParts(((Num)s.Fields[0]).V, ((Num)s.Fields[1]).V),
@@ -322,8 +356,24 @@ internal sealed partial class Docs
         _ => throw new InvalidOperationException(),
     };
 
+    private static object ListOf(ListV l, Repr r, Assembly asm)
+    {
+        Type elem = RuntimeType(r.Elem!, asm);
+        Array items = Array.CreateInstance(elem, l.Items.Length);
+        for (int i = 0; i < l.Items.Length; i++)
+        {
+            items.SetValue(ToClr(l.Items[i], r.Elem!, asm, false), i);
+        }
+        return RuntimeType(r, asm).GetMethod("From")!.Invoke(null, [items])!;
+    }
+
     private static bool Same(object? got, Val want, bool decimalForm) => (got, want) switch
     {
+        (string g, StrV w) => g == w.V,
+        (System.Collections.IEnumerable g, ListV w) when got is not string => g.Cast<object?>().ToArray() is object?[] a
+            && a.Length == w.Items.Length && a.Select((x, i) => Same(x, w.Items[i], false)).All(x => x),
+        (not null, OptV w) => (bool)got.GetType().GetProperty("IsSome")!.GetValue(got)! == (w.V is not null)
+            && (w.V is null || Same(got.GetType().GetProperty("Value")!.GetValue(got), w.V, false)),
         (BigInteger g, Num w) => g == w.V,
         (bool g, BoolV w) => g == w.V,
         (Enum g, EnumV w) => Convert.ToInt32(g) == w.Index,
@@ -343,8 +393,13 @@ internal sealed partial class Docs
     // ------------------------------------------------------------------ C#
 
     /// <summary>A Lean value as a C# expression, for the overload taking <c>decimal</c> or the exact one.</summary>
-    private static string CSharp(Val v, bool decimalForm) => v switch
+    private static string CSharp(Val v, bool decimalForm, Repr? r = null) => v switch
     {
+        StrV str => Quote(str.V),
+        ListV l when r?.Elem is Repr el => l.Items.Length == 0 ? $"new {TypeName(el, false)}[0]"
+            : $"new {TypeName(el, false)}[] {{ {string.Join(", ", l.Items.Select(x => CSharp(x, false, el)))} }}",
+        ListV l => "[" + string.Join(", ", l.Items.Select(x => CSharp(x, false))) + "]",
+        OptV o => o.V is null ? "none" : "some " + CSharp(o.V, false),
         Num n => n.V >= long.MinValue && n.V <= long.MaxValue ? n.V.ToString() : $"BigInteger.Parse(\"{n.V}\")",
         BoolV b => b.V ? "true" : "false",
         EnumV e => $"{Short(e.L.ClrName)}.{e.L.Cases[e.Index].ClrName}",
@@ -355,6 +410,22 @@ internal sealed partial class Docs
 
     private static string Short(string clrName) => clrName[(clrName.LastIndexOf('.') + 1)..];
 
+    private static string Quote(string s) => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n") + "\"";
+
+    /// <summary>The C# name of a representation's type.</summary>
+    private static string TypeName(Repr r, bool decimalForm) =>
+        decimalForm && r.Layout?.DecimalShaped == true ? "decimal"
+        : decimalForm && r.Kind == Kind.Nat ? "int"
+        : r.Kind switch
+        {
+            Kind.Nat or Kind.Int => "BigInteger",
+            Kind.Bool => "bool",
+            Kind.String => "string",
+            Kind.List => $"LeanList<{TypeName(r.Elem!, false)}>",
+            Kind.Option => $"LeanOption<{TypeName(r.Elem!, false)}>",
+            _ => Short(r.Layout!.ClrName),
+        };
+
     /// <summary><c>2675, 3</c> as <c>2.675</c>; <c>-125, 3</c> as <c>-0.125</c>; <c>13, 0</c> as <c>13</c>.</summary>
     public static string DecimalLiteral(BigInteger mantissa, BigInteger scale)
     {
@@ -364,20 +435,22 @@ internal sealed partial class Docs
         return (mantissa.Sign < 0 ? "-" : "") + body;
     }
 
-    private string Call(Example ex, bool decimalForm) =>
-        $"{Short(_compiler.ClassName)}.{ex.Export.ClrName}({string.Join(", ", ex.Args.Select(a => CSharp(a, decimalForm)))})";
+    private string Call(Example ex, bool decimalForm)
+    {
+        Param[] ps = ex.Export.Params.Where(p => p.Repr.IsData).ToArray();
+        return $"{Short(_compiler.ClassName)}.{ex.Export.ClrName}({string.Join(", ", ex.Args.Select((a, i) => CSharp(a, decimalForm, ps[i].Repr)))})";
+    }
 
     private static string ResultComment(Val v, bool decimalForm) => v switch
     {
         StructV s when decimalForm && s.L.DecimalShaped => DecimalLiteral(((Num)s.Fields[0]).V, ((Num)s.Fields[1]).V),
+        ListV l => "[" + string.Join(", ", l.Items.Select(x => ResultComment(x, false))) + "]",
         _ => CSharp(v, decimalForm),
     };
 
     private string Signature(Export e, bool decimalForm)
     {
-        string T(Repr r) => decimalForm && r.Layout?.DecimalShaped == true ? "decimal"
-            : decimalForm && r.Kind == Kind.Nat ? "int"
-            : r.Kind switch { Kind.Nat or Kind.Int => "BigInteger", Kind.Bool => "bool", _ => Short(r.Layout!.ClrName) };
+        string T(Repr r) => TypeName(r, decimalForm);
         var ps = e.Params.Where(p => p.Repr.IsData).Select(p => $"{T(p.Repr)} {p.ClrName}");
         return $"public static {T(e.Result)} {e.ClrName}({string.Join(", ", ps)})";
     }
@@ -499,12 +572,23 @@ internal sealed partial class Docs
     private static string DocId(Repr r, bool dec) =>
         dec && r.Layout?.DecimalShaped == true ? "System.Decimal"
         : dec && r.Kind == Kind.Nat ? "System.Int32"
-        : r.Kind switch { Kind.Nat or Kind.Int => "System.Numerics.BigInteger", Kind.Bool => "System.Boolean", _ => r.Layout!.ClrName };
+        : r.Kind switch
+        {
+            Kind.Nat or Kind.Int => "System.Numerics.BigInteger",
+            Kind.Bool => "System.Boolean",
+            Kind.String => "System.String",
+            Kind.List => "LeanToDotNet.Runtime.LeanList{" + DocId(r.Elem!, false) + "}",
+            Kind.Option => "LeanToDotNet.Runtime.LeanOption{" + DocId(r.Elem!, false) + "}",
+            _ => r.Layout!.ClrName,
+        };
 
     private static string ParamDoc(Param p, bool dec) => p.Repr.Kind switch
     {
         Kind.Nat => dec ? "A Lean Nat: zero or more. A negative value throws ArgumentOutOfRangeException." : "A Lean Nat: zero or more. A negative BigInteger throws ArgumentOutOfRangeException.",
         Kind.Int => "A Lean Int.",
+        Kind.String => "A Lean String.",
+        Kind.List => $"A Lean List. Pass a LeanList, or an array, which converts to one.",
+        Kind.Option => "A Lean Option.",
         Kind.Struct when dec && p.Repr.Layout!.DecimalShaped => $"The value, as a decimal. It becomes a {p.Repr.Layout.Name} with the same mantissa and scale.",
         _ => $"A Lean {p.LeanName}.",
     };
@@ -521,6 +605,10 @@ internal sealed partial class Docs
         sb.AppendLine();
         sb.AppendLine($"> {VerdictLine()}");
         sb.AppendLine($"> Every example on this page was run against `{_asm}.dll` when it was built and returned the proved value.");
+        if (DifferentialLine is not null)
+        {
+            sb.AppendLine("> " + DifferentialLine);
+        }
         sb.AppendLine();
         foreach (var (m, doc) in _moduleDocs)
         {
@@ -625,7 +713,8 @@ internal sealed partial class Docs
         sb.AppendLine("- Lean's kernel, which accepted every proof when the project was built.");
         sb.AppendLine("- " + VerdictLine());
         sb.AppendLine("- The axioms listed next to each theorem. `propext`, `Quot.sound` and `Classical.choice` are Lean's standard three; `sorryAx` would mean an unfinished proof and lean2il reports it.");
-        sb.AppendLine("- lean2il's translation from the kernel term to IL, which the proved examples above test on every build, and `LeanToDotNet.Runtime`: `BigInteger` arithmetic with Lean's meaning for `Nat` and `Int`, and the exact `decimal` conversion.");
+        sb.AppendLine("- lean2il's translation from the kernel term to IL, which the proved examples above test on every build" + (DifferentialLine is not null ? ", along with random inputs compared against Lean's own compiler" : "") + ", and `LeanToDotNet.Runtime`: `BigInteger` arithmetic with Lean's meaning for `Nat` and `Int`, and the exact `decimal` conversion.");
+        sb.AppendLine("- For recursive functions, the equation lemmas Lean proves for them (`f.eq_def`), which Tenet re-checks with everything else; each method is compiled from its equation's right-hand side.");
         sb.AppendLine();
         return sb.ToString();
     }
@@ -646,6 +735,7 @@ internal sealed partial class Docs
             markdown = _asm + ".md",
             @class = _compiler.ClassName,
             verdict = new { _verdict.Checked, _verdict.WithImports, _verdict.Declarations, _verdict.Modules, _verdict.Failed, seconds = Math.Round(_verdict.Elapsed.TotalSeconds, 1), lean = _verdict.Lean },
+            differential = DifferentialLine,
             functions = _compiler.Exports.Values.Select(e => new
             {
                 lean = e.Name.ToString(),

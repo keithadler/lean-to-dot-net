@@ -124,7 +124,7 @@ function updateStatus() {
     status.text = v.Checked ? `$(verified-filled) ${b.proof.assembly}: Tenet ${v.Declarations.toLocaleString()} ✓` : `$(warning) ${b.proof.assembly}: not re-checked`;
     status.tooltip = new vscode.MarkdownString(
       `**${b.proof.dll}**: ${plural(b.proof.functions.length, 'function')}, ${plural(b.proof.theorems.length, 'theorem')}\n\n` +
-      verdictText(v) + '\n\nClick for the Proof Dashboard.');
+      verdictText(v) + (b.proof.differential ? '\n\n' + b.proof.differential : '') + '\n\nClick for the Proof Dashboard.');
     status.command = 'lean2dotnet.dashboard';
   }
   status.show();
@@ -268,6 +268,7 @@ function dashboardHtml(webview) {
     body += `<header>
       <div class="title"><h1>${esc(p.assembly)}</h1><span class="cls">${esc(p.class)}</span></div>
       <div class="verdict ${v.Checked ? 'ok' : 'warn'}"><span class="dot"></span>${v.Checked ? `Tenet re-checked <b>${v.Declarations.toLocaleString()}</b> declarations in ${v.Modules} modules${v.WithImports ? ', Lean’s library included' : ''}. <b>${v.Failed}</b> rejected.` : 'Not re-checked by Tenet (built with --no-check).'}</div>
+      ${p.differential ? `<div class="verdict ok"><span class="dot"></span>${esc(p.differential)}</div>` : ''}
       <div class="stats">
         <div><b>${p.functions.length}</b><span>${p.functions.length === 1 ? 'function' : 'functions'}</span></div>
         <div><b>${p.theorems.length}</b><span>theorems</span></div>

@@ -27,6 +27,11 @@ foreach (decimal l in lines)
     Console.WriteLine($"  {l,10} -> {Proven.RoundCents(l),8}");
 }
 Console.WriteLine();
+Console.WriteLine("Splitting a $100.00 bill three ways:");
+Console.WriteLine($"  total / 3 each:        {3 * Math.Round(100.00m / 3, 2),8}   a cent short");
+var shares = Proven.SplitEven(10000, 3);
+Console.WriteLine($"  Proven.SplitEven:      {string.Join(" + ", shares.Select(c => (decimal)c / 100m))} = {shares.Aggregate(System.Numerics.BigInteger.Zero, (a, b) => a + b) / 100}.00, proved to add up");
+Console.WriteLine();
 Console.WriteLine(ProvenInfo.Verdict);
 Console.WriteLine($"{ProvenInfo.Theorems().Length} theorems stand behind this assembly, among them:");
 foreach (string t in ProvenInfo.Theorems().Where(t => t.Contains("round_")).Take(5))

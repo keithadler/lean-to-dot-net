@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0 (2026-09-27)
+
+What the review of 0.1 asked for: a bigger fragment and a stronger check on the compiler.
+
+- **Recursion**, structural and well-founded, your own and Lean's library's, compiled from the equation lemmas
+  Lean proves (`f.eq_def`), which Tenet re-checks with the project. Tail calls become jumps; deeper recursion is
+  rerun on a 1 GB stack instead of crashing the process.
+- **Lists, options and strings**: `List α` as `LeanList<T>`, `Option α` as `LeanOption<T>`, `String` as
+  `string` with Lean's character counts. Library functions like `List.map`, `foldr`, `sum`, `reverse` and `++`
+  compile, specialized to closed function arguments.
+- **Differential testing on every build**: each export runs on random inputs through Lean's own compiler and
+  through the IL, and the build fails on the first disagreement, naming the input (`--fuzz`, default 100).
+- **A harder demo**: `Finance/Split.lean` splits a bill into shares proved to add up to exactly the total,
+  refunds included, and to differ by at most a cent.
+- `examples/showcase`, compiled and differential-tested on every build; 57 C# tests.
+- Fixes: Lean's `'`, `?` and `!` in names become valid .NET names; Lean-internal `_unary` exports are skipped.
+
 ## 0.2.0 (2026-09-27)
 
 - The VS Code extension (0.3.0) works out of the box: it bundles lean2il, Tenet and the two .NET reference

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Bundles lean2il 0.3.0: recursive definitions (compiled from the equation lemmas Lean proves for them), lists,
+  options and strings, deep recursion without stack overflows, and a differential test of every build against
+  Lean's own compiler.
+- The dashboard and the status bar report the differential test; a disagreement lands in the Problems panel on
+  the function it names.
+
 ## 0.3.0
 
 - **Works out of the box.** lean2il, Tenet and the two .NET reference assemblies they need ship inside the

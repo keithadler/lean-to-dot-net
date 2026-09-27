@@ -1,8 +1,8 @@
 {
   "name": "lean-to-dot-net",
   "displayName": "Lean to .NET",
-  "description": "Prove a function in Lean 4, call it from C#, F# or VB.NET. Builds the assembly with lean2il (bundled) and shows the proofs behind every call: a Proofs view, a Proof Dashboard, lenses, hovers and completion, and Tenet's verdict in the status bar.",
-  "version": "0.3.0",
+  "description": "Prove a function in Lean 4, call it from C#, F# or VB.NET: recursion, lists, strings and options included. Builds with lean2il (bundled), tests every build against Lean's own compiler, and shows the proofs behind every call: a Proofs view, a Proof Dashboard, lenses, hovers and completion.",
+  "version": "0.4.0",
   "publisher": "keithadler",
   "license": "MIT",
   "icon": "images/icon.png",

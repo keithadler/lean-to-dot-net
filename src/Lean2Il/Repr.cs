@@ -19,15 +19,21 @@ internal enum Kind
     Enum,
     /// <summary>A structure, as a sealed .NET class with one read-only field per field that is not erased.</summary>
     Struct,
+    /// <summary><c>String</c>, as <c>System.String</c>.</summary>
+    String,
+    /// <summary><c>List α</c>, as <c>LeanList&lt;T&gt;</c>.</summary>
+    List,
+    /// <summary><c>Option α</c>, as <c>LeanOption&lt;T&gt;</c>.</summary>
+    Option,
     /// <summary>Something lean2il does not compile yet: a function value, a recursive type, a type with indices.</summary>
     Unsupported,
 }
 
-internal sealed record Repr(Kind Kind, Type? Clr = null, Layout? Layout = null, string? Why = null)
+internal sealed record Repr(Kind Kind, Type? Clr = null, Layout? Layout = null, string? Why = null, Repr? Elem = null)
 {
     public static readonly Repr Erased = new(Kind.Erased);
 
-    public bool IsData => Kind is Kind.Nat or Kind.Int or Kind.Bool or Kind.Enum or Kind.Struct;
+    public bool IsData => Kind is Kind.Nat or Kind.Int or Kind.Bool or Kind.Enum or Kind.Struct or Kind.String or Kind.List or Kind.Option;
 
     public Type ClrType => Clr ?? throw new CompileError(Why ?? $"no .NET type for a value of kind {Kind}");
 }

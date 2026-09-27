@@ -1,0 +1,5 @@
+name = "showcase"
+defaultTargets = ["Showcase"]
+
+[[lean_lib]]
+name = "Showcase"

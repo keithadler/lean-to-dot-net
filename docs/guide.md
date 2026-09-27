@@ -57,6 +57,7 @@ lean2il <lake-project> [options]
 | `--class <name>` | `Proven` | The static class holding the exported functions. |
 | `--trust-imports` | off | Re-check only the project's own modules, not Lean's library under them. Seconds instead of a minute or two. |
 | `--no-check` | off | Skip Tenet. The docs and `ProvenInfo.Verdict` then say the proofs were not re-checked. |
+| `--fuzz <n>` | `100` | Random inputs per export, run by Lean's own compiler and by the IL, which must agree. `0` skips it. |
 | `--leanviz <url>` | none | A LeanViz site for the project; theorem names in the docs link there. |
 | `--source <url>` | none | Base URL of the Lean sources; each theorem links to its lines. |
 
@@ -80,6 +81,9 @@ any Lake dependencies under `.lake/packages`.
 | `Nat` | `BigInteger`, never negative; a negative argument throws `ArgumentOutOfRangeException` |
 | `Int` | `BigInteger` |
 | `Bool`, `Decidable p` | `bool` (a `Decidable` keeps its answer and drops its proof) |
+| `String` | `string`; `String.length` counts characters (code points), as Lean does, not UTF-16 units |
+| `List α` | `LeanList<T>`: immutable, singly linked, an `IReadOnlyList<T>`; an array converts to one implicitly |
+| `Option α` | `LeanOption<T>`: `IsSome`, `Value`, `None`, `Some(x)` |
 | an inductive whose constructors take no arguments | a .NET `enum`, cases in the same order |
 | a structure | a sealed class with a constructor and one public read-only field per field |
 | a structure of an `Int` and then a `Nat` | also accepted and returned as `decimal`, through an overload |
@@ -116,21 +120,49 @@ Everything comes from the `.olean`, the file the proofs are in:
 - **Field and constructor docstrings** document the .NET fields and enum members.
 - **The module docstring** (`/-! ... -/`) introduces the Markdown page.
 
+## Recursion
+
+Lean elaborates a recursive definition into a term built on `brecOn` (structural recursion) or `WellFounded.fix`
+(well-founded recursion). Neither is something to run. But Lean proves, for every recursive `f`, an equation
+lemma `f.eq_def : ∀ xs, f xs = rhs`, where `rhs` is the body as you wrote it, calling `f` directly.
+
+lean2il finds every recursive definition the exports reach (Lean marks them by also emitting `f._unsafe_rec`),
+writes a small module, `.lake/lean2il/Lean2IlEqns.lean`, that asks Lean for each `eq_def`, and has Lean compile
+it. Tenet re-checks that module with the rest of the project, and each recursive method is compiled from its
+equation's right-hand side, where a recursive call is an ordinary call. So the IL computes something both kernels
+agree equals `f`. The same goes for Lean's library: `List.map`, `List.foldr`, `List.length`, `List.reverse`,
+`List.append`.
+
+At run time:
+
+- A call to itself in **tail position** becomes a jump: `gcd`, loops and accumulators run in constant stack.
+- Any other recursion checks, before each call, that the stack has room. When it does not, the call throws, the
+  exception unwinds, and the public method runs the whole call again on a thread with a 1 GB stack. Rerunning is
+  safe because a compiled Lean function has no side effects. `sumTo 200000`, which is not tail recursive, returns
+  in about 20 ms.
+- A helper used at two different types, or with two different function arguments, is two methods.
+
 ## What compiles
 
-Non-recursive definitions over the types in the table above; `if`, `match`, `let`, and anything built from
-them; instances, numerals and coercions (unfolded at compile time); calls between exports; `Nat` and `Int`
-arithmetic including Lean's division, modulo, power, gcd, shifts and bitwise operations.
+Definitions over the types in the table above, with `if`, `match`, `let`, and anything built from them;
+instances, numerals and coercions (unfolded at compile time); recursion, as above; calls between exports; `Nat`
+and `Int` arithmetic including Lean's division, modulo, power, gcd, shifts and bitwise operations; string
+concatenation, length, equality, and `toString` of numbers.
+
+A **function argument** compiles when it uses no local variables: the function it is passed to is specialized to
+it, as a C++ template would be. So `xs.sum` and `xs.map (fun x => 2 * x)` compile, and
+`xs.map (fun x => x + k)` with a local `k` does not, yet.
 
 Not yet, and refused with a message rather than compiled wrong:
 
 | Refused | Message |
 |---|---|
-| recursion | `it is defined by structural recursion (Nat.brecOn)` or `well-founded recursion` |
-| a function as a value | `a function value would be needed at run time` |
-| `String`, `Float`, `Array`, `List` | `no run-time form for the type ...` |
-| inductives with parameters, indices or recursive fields | `the type X is not compiled: it is recursive` (or has parameters, or indices) |
-| types from outside the project | `only types declared in the compiled project become .NET types` |
+| a lambda that captures local variables | `is passed a function that uses local variables` |
+| a function stored or returned as a value | `a function value would be needed at run time` |
+| `Float`, `Array`, `Char`, `UInt64` and other types without a mapping | `no run-time form for the type ...` |
+| user inductives with parameters, indices or recursive fields | `the type X is not compiled: it is recursive` (or has parameters, or indices) |
+| types from outside the project, other than the built-in ones above | `only types declared in the compiled project become .NET types` |
+| a recursive definition Lean gives no equation lemma for | `is recursive and Lean gave no equation lemma for it` |
 | `partial` and `unsafe` definitions | `is partial or unsafe; lean2il compiles only what the kernel checked` |
 | `opaque` and axioms | `is opaque; its value cannot be compiled` |
 
@@ -143,14 +175,17 @@ Not yet, and refused with a message rather than compiled wrong:
 | `Tenet rejected the project; nothing was emitted` | A declaration failed the independent check. Each rejected one is listed with Tenet's reason. Take it seriously. |
 | `nothing is marked @[export]` | Mark at least one definition. |
 | `the IL disagrees with <theorem>` | A proved example returned something else on the compiled assembly. This is a lean2il bug: please open an issue with the Lean. |
+| `the IL disagrees with Lean's own compiler on <function> <input>` | The differential test found an input where Lean and the IL give different answers. Also a lean2il bug, with the input to reproduce it. |
+| `Lean gave no equation lemma for X` | Lean could not state `X.eq_def`; anything that needs `X` is refused. |
 
 In VS Code, all of these land in the Problems panel on the line they are about.
 
 ## What this rests on
 
-The proofs rest on Lean's kernel and, independently, Tenet's, and on the axioms listed next to each theorem.
-The IL rests on lean2il's translation, which is not proved; it is tested, on every build by the replayed
-examples, and in the test suite by comparing the runtime with Lean's own `#eval` output and the compiled
-rounding with `Math.Round(decimal)` on 300,000 inputs. The `decimal` bridge is the one piece between a caller
+The proofs rest on Lean's kernel and, independently, Tenet's, and on the axioms listed next to each theorem;
+recursive functions also rest on their equation lemmas, which both kernels check. The IL rests on lean2il's
+translation, which is not proved; it is tested on every build by the replayed examples and by the differential
+test against Lean's own compiler, and in the test suite by comparing the runtime with Lean's own `#eval` output
+and the compiled rounding with `Math.Round(decimal)` on 300,000 inputs. The `decimal` bridge is the one piece between a caller
 and a proved function that the proofs cannot see, so it is small, exact, and tested to round-trip every
 `decimal` it is given.

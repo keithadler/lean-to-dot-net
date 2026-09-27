@@ -44,6 +44,12 @@ jobs:
           if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then FLAGS=""; else FLAGS="--trust-imports"; fi
           dotnet src/Lean2Il/bin/Release/net10.0/lean2il.dll lean $FLAGS
 
+      - name: Showcase (recursion, lists, options, strings)
+        shell: bash
+        run: |
+          (cd examples/showcase && lake build)
+          dotnet src/Lean2Il/bin/Release/net10.0/lean2il.dll examples/showcase --trust-imports
+
       - name: Tests
         run: dotnet test tests/LeanToDotNet.Tests -c Release --logger "console;verbosity=detailed"
 

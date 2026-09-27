@@ -1,12 +1,12 @@
 {
-  "generated": "2026-09-27 03:34:56Z",
+  "generated": "2026-09-27 06:24:08Z",
   "lean": "4.33.1",
   "target": "lean",
-  "modules": 633,
-  "declarations": 66331,
-  "references": 1308021,
+  "modules": 634,
+  "declarations": 66362,
+  "references": 1308948,
   "inEdgeCap": 200,
-  "definitionBodies": 18537,
+  "definitionBodies": 18544,
   "definitionBodiesCut": 104,
   "axiomUse": [
     0,
@@ -19,9 +19,9 @@
     0,
     0,
     0,
-    26141,
+    26153,
     4,
-    40620,
+    40634,
     0,
     0
   ],
@@ -160,7 +160,8 @@
   "title": "lean-to-dot-net: Finance",
   "ownModules": [
     "Finance",
-    "Finance.Rounding"
+    "Finance.Rounding",
+    "Finance.Split"
   ],
   "holes": [],
   "repository": "https://github.com/keithadler/lean-to-dot-net",
@@ -169,11 +170,11 @@
     "lean": "4.33.1",
     "all": true,
     "success": true,
-    "checked": 64855,
+    "checked": 64886,
     "failed": 0,
-    "seconds": 66.96,
-    "date": "2026-09-27 03:34:34Z",
+    "seconds": 10.36,
+    "date": "2026-09-27 06:24:04Z",
     "report": "check.json",
-    "sha256": "30943c67aaea5eed2d7ddf969ee0cb4b0c9e42af91674130daf73caa83a5a2cc"
+    "sha256": "6270d130e30e686a4ae52761387d138904af2406e671b6ef7bfe3a46edcf57cb"
   }
 }

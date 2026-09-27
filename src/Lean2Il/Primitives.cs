@@ -71,6 +71,14 @@ internal static class Primitives
         Add("Int.decLe", a01, Kind.Bool, clr.Big2("op_LessThanOrEqual"));
         Add("Int.decLt", a01, Kind.Bool, clr.Big2("op_LessThan"));
 
+        // String, and printing numbers
+        Add("String.append", a01, Kind.String, clr.Static(clr.LeanString, "Append", clr.String, clr.String));
+        Add("String.length", a0, Kind.Nat, clr.Static(clr.LeanString, "Length", clr.String));
+        Add("String.decEq", a01, Kind.Bool, clr.Static(clr.LeanString, "DecEq", clr.String, clr.String));
+        Add("instDecidableEqString", a01, Kind.Bool, clr.Static(clr.LeanString, "DecEq", clr.String, clr.String));
+        Add("Nat.repr", a0, Kind.String, clr.Static(clr.LeanNat, "Repr", clr.BigInteger));
+        Add("Int.repr", a0, Kind.String, clr.Static(clr.LeanInt, "Repr", clr.BigInteger));
+
         // Bool
         AddIl("Bool.decEq", a01, Kind.Bool, il => il.Emit(OpCodes.Ceq));
         AddIl("instDecidableEqBool", a01, Kind.Bool, il => il.Emit(OpCodes.Ceq));

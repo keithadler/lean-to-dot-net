@@ -24,7 +24,11 @@ dotnet src/Lean2Il/bin/Release/net10.0/lean2il.dll lean $CHECK \
   --source "https://github.com/keithadler/lean-to-dot-net/blob/main/lean"
 cp lean/.lake/dotnet/Finance.Proven.md docs/Finance.Proven.md
 
-step "Tests: runtime against Lean's own answers, and Proven.Round against Math.Round(decimal)"
+step "Showcase: recursion, lists, options and strings (examples/showcase)"
+(cd examples/showcase && lake build)
+dotnet src/Lean2Il/bin/Release/net10.0/lean2il.dll examples/showcase $CHECK
+
+step "Tests: runtime against Lean's own answers, Proven.Round against Math.Round(decimal), the split, the showcase"
 dotnet test tests/LeanToDotNet.Tests -c Release -nologo -v quiet
 
 step "Sample: samples/Invoice"

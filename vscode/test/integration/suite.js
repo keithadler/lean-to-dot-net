@@ -95,7 +95,8 @@ const tests = [
     const scratch = path.join(root, 'lean', 'Finance', 'ScratchRec.lean');
     const finance = path.join(root, 'lean', 'Finance.lean');
     const original = fs.readFileSync(finance, 'utf8');
-    fs.writeFileSync(scratch, 'namespace Finance\n\n/-- Recursive. -/\n@[export lean2il_scratch_rec]\ndef sumTo : Nat → Nat\n  | 0 => 0\n  | n + 1 => (n + 1) + sumTo n\n\nend Finance\n');
+    // Something lean2il still refuses: a lambda that captures a local variable.
+    fs.writeFileSync(scratch, 'namespace Finance\n\n/-- Adds k to each. -/\n@[export lean2il_scratch_rec]\ndef addAll (k : Int) (xs : List Int) : List Int := xs.map (fun x => x + k)\n\nend Finance\n');
     fs.writeFileSync(finance, original + 'import Finance.ScratchRec\n');
     const api = vscode.extensions.getExtension('keithadler.lean-to-dot-net').exports;
     try {
@@ -108,8 +109,8 @@ const tests = [
         const d = vscode.languages.getDiagnostics(vscode.Uri.file(scratch));
         return d.length > 0 && d;
       }, 20000);
-      assert.match(diags[0].message, /structural recursion/);
-      assert.equal(diags[0].range.start.line, 3, 'on the @[export] line of sumTo');
+      assert.match(diags[0].message, /uses local variables/);
+      assert.equal(diags[0].range.start.line, 3, 'on the @[export] line of addAll');
     } finally {
       fs.writeFileSync(finance, original);
       fs.rmSync(scratch, { force: true });
@@ -126,7 +127,8 @@ const tests = [
     assert.match(api.lastBuild.command, /server[\\/]lean2il\.dll/, 'used the bundled lean2il');
     assert.ok(fs.statSync(proofJson).mtimeMs > before, 'proof.json rewritten');
     const proof = JSON.parse(fs.readFileSync(proofJson, 'utf8'));
-    assert.equal(proof.functions.length, 2);
+    assert.deepEqual(proof.functions.map(f => f.method).sort(), ['Round', 'RoundCents', 'SplitEven']);
+    assert.match(proof.differential ?? '', /gave the same answer every time/);
     assert.equal(proof.verdict.Failed, 0);
   }],
 ];

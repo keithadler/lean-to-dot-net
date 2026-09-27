@@ -37,6 +37,9 @@ public static class LeanNat
     /// <summary><c>Nat.shiftRight</c>.</summary>
     public static BigInteger ShiftRight(BigInteger a, BigInteger b) => b > int.MaxValue ? BigInteger.Zero : a >> (int)b;
 
+    /// <summary><c>Nat.repr</c>: decimal digits, no separators, whatever the culture.</summary>
+    public static string Repr(BigInteger n) => n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
     /// <summary>
     /// The guard every public entry point puts on a <c>Nat</c> argument: .NET has no unsigned big integer, so a
     /// negative value is refused here rather than given a meaning Lean never proved anything about.
@@ -105,6 +108,9 @@ public static class LeanInt
 
     /// <summary><c>Int.negSucc n</c>, which is <c>-(n + 1)</c>.</summary>
     public static BigInteger NegSucc(BigInteger n) => -(n + 1);
+
+    /// <summary><c>Int.repr</c>: <c>-5</c>, <c>0</c>, <c>12</c>.</summary>
+    public static string Repr(BigInteger n) => n.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary><c>Int.pow</c>: an <c>Int</c> to a <c>Nat</c> power.</summary>
     public static BigInteger Pow(BigInteger a, BigInteger b) => (b > int.MaxValue

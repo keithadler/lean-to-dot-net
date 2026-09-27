@@ -2,10 +2,10 @@
   {
     "slug": "finance",
     "title": "lean-to-dot-net: Finance",
-    "declarations": 66331,
-    "modules": 633,
+    "declarations": 66362,
+    "modules": 634,
     "lean": "4.33.1",
-    "generated": "2026-09-27 03:34:56Z",
+    "generated": "2026-09-27 06:24:08Z",
     "checked": true
   }
 ]
