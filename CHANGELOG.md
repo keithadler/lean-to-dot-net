@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.3.2 (unreleased)
+## 0.3.2 (2026-10-24)
 
-Lean 4.35.0.
+Lean 4.35.0. The VS Code extension is 0.4.2 and bundles this lean2il.
 
 - **Lean 4.35.0 compiles.** 4.35 redefined `Decidable` from an inductive type (`isFalse`/`isTrue`) to a structure around
   its `Bool` answer (`Decidable.intro`, with `Decidable.decide` as its first field). lean2il handles both shapes, and
