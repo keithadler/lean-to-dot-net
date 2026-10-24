@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/keithadler/lean-to-dot-net/actions/workflows/ci.yml/badge.svg)](https://github.com/keithadler/lean-to-dot-net/actions/workflows/ci.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Lean 4.33.1](https://img.shields.io/badge/Lean-4.33.1-blue)](lean/lean-toolchain)
+[![Lean 4.35.0](https://img.shields.io/badge/Lean-4.35.0-blue)](lean/lean-toolchain)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512bd4)](global.json)
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/keithadler.lean-to-dot-net?label=VS%20Code)](https://marketplace.visualstudio.com/items?itemName=keithadler.lean-to-dot-net)
 [![Open VSX](https://img.shields.io/open-vsx/v/keithadler/lean-to-dot-net?label=Open%20VSX)](https://open-vsx.org/extension/keithadler/lean-to-dot-net)

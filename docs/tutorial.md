@@ -32,11 +32,11 @@ If the command is not found, add `~/.dotnet/tools` to your `PATH`.
 ## 1. Make a Lean project
 
 ```bash
-lake +leanprover/lean4:v4.33.1 new shop lib
+lake +leanprover/lean4:v4.35.0 new shop lib
 cd shop
 ```
 
-The `+leanprover/lean4:v4.33.1` pins the Lean version, so this works even before you have picked a default
+The `+leanprover/lean4:v4.35.0` pins the Lean version, so this works even before you have picked a default
 toolchain. The project has a library called `Shop`, with its code in `Shop/Basic.lean`.
 
 ## 2. Write the function, and say what it does
@@ -94,8 +94,8 @@ lean2il .
 ```
 
 ```
-lean2il: 2 modules in .../shop (Lean 4.33.1)
-tenet: 64,660 declarations in 633 modules re-checked (with everything they import), 0 failed, 107.7s
+lean2il: 2 modules in .../shop (Lean 4.35.0)
+tenet: 64,662 declarations in 655 modules re-checked (with everything they import), 0 failed, 70.2s
 emitted .../shop/.lake/dotnet/Shop.Proven.dll: 1 function in Shop.Proven, for net10.0
   Shop.Proven.LineTotal  <-  Shop.lineTotal
 docs: Shop.Proven.xml (IntelliSense), Shop.Proven.md (how to call it), Shop.Proven.proof.json; 3 theorems, 1 proved example replayed against the IL, all equal
@@ -104,7 +104,7 @@ docs: Shop.Proven.xml (IntelliSense), Shop.Proven.md (how to call it), Shop.Prov
 What happened, line by line:
 
 1. **Tenet re-checked everything.** Not just your three theorems: every declaration in Lean's own library
-   that they rest on, 64,660 of them, through a second, independent kernel. If Tenet had rejected anything,
+   that they rest on, 64,662 of them, through a second, independent kernel. If Tenet had rejected anything,
    lean2il would have stopped here and emitted nothing. For a quicker loop while you work, `--trust-imports`
    re-checks only your own modules (a few seconds).
 2. **`lineTotal` became `Shop.Proven.LineTotal`**, compiled from the term Tenet just checked.
@@ -146,7 +146,7 @@ dotnet run --project ShopApp
 
 ```
 900
-Every proof was re-checked by Tenet, an independent Lean kernel: 64,660 declarations in 633 modules, Lean's own library under the project included, none rejected (Lean 4.33.1).
+Every proof was re-checked by Tenet, an independent Lean kernel: 64,662 declarations in 655 modules, Lean's own library under the project included, none rejected (Lean 4.35.0).
 ```
 
 A Lean `Nat` is a `BigInteger` in .NET (it has no size limit in Lean either), so `LineTotal` takes

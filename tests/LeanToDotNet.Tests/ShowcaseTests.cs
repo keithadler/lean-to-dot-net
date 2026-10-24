@@ -178,4 +178,23 @@ public class ShowcaseTests
         Assert.Equal("n", Names(nameof(Proven.SumTo)));
         Assert.True(Proven.Contains(k: 1, tree: Proven.OfList(new BigInteger[] { 1 })));
     }
+
+    // Decidable is an inductive type through Lean 4.34 and a structure around a Bool from 4.35; both compile to bool.
+    [Fact]
+    public void DecidablePropositionsAreBooleans()
+    {
+        Assert.True(Proven.IsEven(4));
+        Assert.False(Proven.IsEven(7));
+        Assert.Equal(3, Proven.ClampTo(10, 3));
+        Assert.Equal(10, Proven.ClampTo(10, 30));
+        Assert.True(Proven.InBand(5, 9, 7));
+        Assert.True(Proven.InBand(5, 9, 0));
+        Assert.False(Proven.InBand(5, 9, 12));
+        Assert.Equal(0, Proven.Sign(-3));
+        Assert.Equal(1, Proven.Sign(0));
+        Assert.Equal(2, Proven.Sign(3));
+        Assert.True(Proven.EvenAndSmall(42));
+        Assert.False(Proven.EvenAndSmall(142));
+        Assert.False(Proven.EvenAndSmall(41));
+    }
 }

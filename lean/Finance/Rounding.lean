@@ -225,7 +225,7 @@ theorem round_error_le_half (x : Dec) (digits : Nat) (mode : RoundingMode)
     2 * (x.mantissa - (10 ^ (x.scale - digits) : Nat) * (round x digits mode).mantissa).natAbs
       ≤ 10 ^ (x.scale - digits) := by
   have hq := pow_pos' (x.scale - digits)
-  simp only [round, show ¬x.scale ≤ digits by omega, if_false]
+  simp only [round, show ¬x.scale ≤ digits by omega, ite_false]
   rcases hmode with rfl | rfl
   · have := roundDiv_toEven x.mantissa _ hq; omega
   · have := roundDiv_awayFromZero x.mantissa _ hq; omega
@@ -235,7 +235,7 @@ theorem round_nearest (x : Dec) (digits : Nat) (mode : RoundingMode)
     (hmode : mode = .toEven ∨ mode = .awayFromZero) (h : digits < x.scale) (k : Int) :
     (x.mantissa - (10 ^ (x.scale - digits) : Nat) * (round x digits mode).mantissa).natAbs
       ≤ (x.mantissa - (10 ^ (x.scale - digits) : Nat) * k).natAbs := by
-  simp only [round, show ¬x.scale ≤ digits by omega, if_false]
+  simp only [round, show ¬x.scale ≤ digits by omega, ite_false]
   exact roundDiv_nearest _ _ (pow_pos' _) mode hmode k
 
 /-- **Midpoints, away from zero.** When `x` is exactly halfway, the result is the neighbor further from
@@ -245,7 +245,7 @@ theorem round_tie_awayFromZero (x : Dec) (digits : Nat) (h : digits < x.scale)
     x.mantissa.natAbs < ((10 ^ (x.scale - digits) : Nat) * (round x digits .awayFromZero).mantissa).natAbs := by
   have hq := pow_pos' (x.scale - digits)
   have := divMod x.mantissa (10 ^ (x.scale - digits) : Nat) (by omega)
-  simp only [round, show ¬x.scale ≤ digits by omega, if_false, roundDiv]
+  simp only [round, show ¬x.scale ≤ digits by omega, ite_false, roundDiv]
   repeat' split
   all_goals (try rw [Int.mul_add, Int.mul_one]); omega
 
@@ -254,7 +254,7 @@ theorem round_tie_awayFromZero (x : Dec) (digits : Nat) (h : digits < x.scale)
 theorem round_tie_toEven (x : Dec) (digits : Nat) (h : digits < x.scale)
     (tie : 2 * (x.mantissa % (10 ^ (x.scale - digits) : Nat)) = (10 ^ (x.scale - digits) : Nat)) :
     (round x digits .toEven).mantissa % 2 = 0 := by
-  simp only [round, show ¬x.scale ≤ digits by omega, if_false, roundDiv]
+  simp only [round, show ¬x.scale ≤ digits by omega, ite_false, roundDiv]
   repeat' split
   all_goals omega
 
@@ -266,7 +266,7 @@ theorem round_neg (x : Dec) (digits : Nat) (mode : RoundingMode)
   unfold round
   by_cases h : x.scale ≤ digits
   · simp [h]
-  · simp only [neg_scale, h, if_false, neg_mantissa]
+  · simp only [neg_scale, h, ite_false, neg_mantissa]
     rw [roundDiv_neg _ _ (pow_pos' _) mode hmode]
     rfl
 

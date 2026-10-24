@@ -1236,6 +1236,12 @@ internal sealed class Compiler
                 if (head is ProjExpr p)
                 {
                     Expr s = Reduce(p.Struct);
+                    // A projection of a let (Lean 4.35's order packages build instances this way): project the body.
+                    if (s is LetExpr sl)
+                    {
+                        e = Expr.MkApp(Expr.Let(sl.Name, sl.Type, sl.Value, Expr.Proj(p.StructName, p.Idx, sl.Body), sl.NonDep), args);
+                        continue;
+                    }
                     if (IsCtorApp(s, out ConstructorInfo? ci, out Expr[] cargs))
                     {
                         e = Expr.MkApp(cargs[ci!.NumParams + p.Idx], args);
@@ -1443,6 +1449,12 @@ internal sealed class Compiler
             {
                 return Emit(p.Struct);
             }
+            // Lean 4.35 made Decidable a structure over its Bool answer; the answer is the value itself.
+            if (p.StructName.ToString() == "Decidable" && p.Idx == 0)
+            {
+                Emit(p.Struct);
+                return new Repr(Kind.Bool, _c._clr.Bool);
+            }
             if (p.StructName.ToString() == "Array")
             {
                 Repr list = _c.ReprOf(Tc.Infer(p), Tc);
@@ -1517,6 +1529,10 @@ internal sealed class Compiler
                     return new Repr(Kind.Bool, _c._clr.Bool);
                 case "Bool.true" or "Decidable.isTrue":
                     Il.Emit(OpCodes.Ldc_I4_1);
+                    return new Repr(Kind.Bool, _c._clr.Bool);
+                case "Decidable.intro":
+                    // Lean 4.35 and later: Decidable.intro answer proof. The proof is erased, the answer is the value.
+                    Emit(args[ci.NumParams]);
                     return new Repr(Kind.Bool, _c._clr.Bool);
                 case "List.nil" or "List.cons" or "Option.none" or "Option.some":
                 {
@@ -1633,6 +1649,12 @@ internal sealed class Compiler
             }
             switch (indName.ToString())
             {
+                case "Decidable" when ind.Ctors.Length == 1:
+                {
+                    // Lean 4.35 and later: one constructor, Decidable.intro answer proof. The branch binds the answer.
+                    var answer = new Slot.Local(Spill(major, _c._clr.Bool), new Repr(Kind.Bool, _c._clr.Bool));
+                    return EmitMinor(minors[0], [answer], extra, erasedFields: 2, tail: tail);
+                }
                 case "Bool":
                 case "Decidable":
                 {

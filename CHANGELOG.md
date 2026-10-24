@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.2 (unreleased)
+
+Lean 4.35.0.
+
+- **Lean 4.35.0 compiles.** 4.35 redefined `Decidable` from an inductive type (`isFalse`/`isTrue`) to a structure around
+  its `Bool` answer (`Decidable.intro`, with `Decidable.decide` as its first field). lean2il handles both shapes, and
+  reads whichever the project's toolchain has, so 4.33 and 4.34 projects compile as before: `Decidable.intro b _` is
+  the `bool` `b`, the projection `.decide` is that `bool`, and eliminating one binds it.
+- A projection of a `let` (how 4.35's library builds its order instances for `Int`) is now reduced; before it stopped
+  `Array.foldlM.loop` from compiling.
+- The showcase gains `Showcase/Decide.lean` (custom `Decidable` instances, `decide`, `if`, matching on a decision),
+  with C# tests and differential testing, and it builds on 4.33.1, 4.34.1 and 4.35.0.
+- Proofs in `lean/` use `ite_false` instead of the deprecated `if_false`.
+- The Lean toolchain of `lean/` and the showcase is 4.35.0; Tenet is pinned at 0.11.3. Checked end to end on 4.35.0,
+  with Tenet re-checking all 64,662 declarations of Lean's library the tutorial project imports, and `./build.sh`
+  also passes on 4.34.1 and 4.33.1.
+
 ## 0.3.1 (2026-09-27)
 
 For whoever calls the compiled code, and whoever breaks a proof.
