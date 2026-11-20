@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.3 (2026-11-20)
+
+Lean 4.37.0-rc1.
+
+- **Lean 4.37 compiles.** lean2il took a definition to be recursive when Lean also emitted `f._unsafe_rec`. From
+  4.37, Lean leaves that out for a definition its compiler replaces through `@[csimp]` (`List.length`, `List.map`,
+  `Nat.repeat`), so those were unfolded instead of compiled from their equation lemmas, reached `List.brecOn`, and
+  11 showcase functions that call them failed to compile. A definition with `f._sunfold`, Lean's mark of
+  structural recursion, now counts too.
+- On 4.37, five Finance theorems (`round_scale_le`, `round_tie_awayFromZero`, `round_tie_toEven`, `round_round`
+  and `splitEven_sum`) list `Classical.choice` among their axioms. Their proofs are unchanged:
+  Lean's own lemmas under them now use it.
+- The Lean toolchain of `lean/` and the showcase is 4.37.0-rc1, and Tenet is 0.11.4: the `tenet` tool (before
+  0.11.3) and the `Tenet.Olean` library lean2il reads with (before 0.11.1). Checked end to end on 4.37.0-rc1 with
+  `./build.sh --full`, with Tenet re-checking all 68,362 declarations the Finance build imports, and `./build.sh`
+  also passes on 4.35.0 and 4.34.1.
+
 ## 0.3.2 (2026-10-24)
 
 Lean 4.35.0. The VS Code extension is 0.4.2 and bundles this lean2il.

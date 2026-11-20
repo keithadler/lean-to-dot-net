@@ -592,8 +592,14 @@ internal sealed class Compiler
     /// <summary>The layout already made for an inductive, if it became a .NET type.</summary>
     internal Layout? LayoutOf(Name n) => _layouts.GetValueOrDefault(n.ToString());
 
-    /// <summary>Lean marks every recursive definition by also emitting <c>f._unsafe_rec</c>, the version its own compiler runs.</summary>
-    internal bool IsRecursive(Name n) => Resolve(Name.Parse(n + "._unsafe_rec")) is not null;
+    /// <summary>
+    /// Lean marks a recursive definition by also emitting <c>f._unsafe_rec</c>, the version its own compiler runs, and
+    /// a structurally recursive one by <c>f._sunfold</c>, its smart-unfolding body. From 4.37 a definition its
+    /// compiler replaces (<c>@[csimp]</c>, as <c>List.length</c> and <c>List.map</c> are) has no <c>_unsafe_rec</c>,
+    /// so either one will do.
+    /// </summary>
+    internal bool IsRecursive(Name n) =>
+        Resolve(Name.Parse(n + "._unsafe_rec")) is not null || Resolve(Name.Parse(n + "._sunfold")) is not null;
 
     /// <summary>The recursive definitions an export reaches, whose equation lemmas the build has to ask Lean for.</summary>
     public HashSet<Name> RecursiveReachableFrom(IEnumerable<Name> roots, HashSet<Name> replaced)
